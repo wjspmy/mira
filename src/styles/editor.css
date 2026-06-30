@@ -10,6 +10,17 @@
     "Microsoft YaHei", sans-serif;
 }
 
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #c9d1d9;
+  --muted: #8b949e;
+  --border: #30363d;
+  --code-bg: #161b22;
+}
+:root[data-theme="dark"] body { background: var(--bg); }
+:root[data-theme="dark"] .toolbar button { background: #21262d; color: var(--fg); }
+:root[data-theme="dark"] .toolbar button:hover { background: #30363d; }
+
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); }
@@ -69,6 +80,26 @@ body { background: var(--bg); color: var(--fg); }
   line-height: 1.5;
 }
 .editor .ProseMirror pre code { background: none; padding: 0; font-size: 1em; }
+
+/* 代码高亮 token（浅色，github 风） */
+.editor .ProseMirror .hljs-comment, .editor .ProseMirror .hljs-quote { color: #6a737d; font-style: italic; }
+.editor .ProseMirror .hljs-keyword, .editor .ProseMirror .hljs-selector-tag, .editor .ProseMirror .hljs-literal, .editor .ProseMirror .hljs-doctag { color: #d73a49; }
+.editor .ProseMirror .hljs-string, .editor .ProseMirror .hljs-regexp, .editor .ProseMirror .hljs-addition { color: #032f62; }
+.editor .ProseMirror .hljs-number, .editor .ProseMirror .hljs-built_in, .editor .ProseMirror .hljs-type, .editor .ProseMirror .hljs-symbol { color: #005cc5; }
+.editor .ProseMirror .hljs-title, .editor .ProseMirror .hljs-function .hljs-title, .editor .ProseMirror .hljs-section, .editor .ProseMirror .hljs-attr { color: #6f42c1; }
+.editor .ProseMirror .hljs-tag, .editor .ProseMirror .hljs-name, .editor .ProseMirror .hljs-property { color: #22863a; }
+.editor .ProseMirror .hljs-meta, .editor .ProseMirror .hljs-variable { color: #005cc5; }
+.editor .ProseMirror .hljs-deletion { color: #d73a49; }
+
+/* 深色 token 覆盖（github-dark 风） */
+:root[data-theme="dark"] .editor .ProseMirror .hljs-comment, :root[data-theme="dark"] .editor .ProseMirror .hljs-quote { color: #8b949e; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-keyword, :root[data-theme="dark"] .editor .ProseMirror .hljs-selector-tag, :root[data-theme="dark"] .editor .ProseMirror .hljs-literal, :root[data-theme="dark"] .editor .ProseMirror .hljs-doctag { color: #ff7b72; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-string, :root[data-theme="dark"] .editor .ProseMirror .hljs-regexp, :root[data-theme="dark"] .editor .ProseMirror .hljs-addition { color: #a5d6ff; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-number, :root[data-theme="dark"] .editor .ProseMirror .hljs-built_in, :root[data-theme="dark"] .editor .ProseMirror .hljs-type, :root[data-theme="dark"] .editor .ProseMirror .hljs-symbol { color: #79c0ff; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-title, :root[data-theme="dark"] .editor .ProseMirror .hljs-function .hljs-title, :root[data-theme="dark"] .editor .ProseMirror .hljs-section, :root[data-theme="dark"] .editor .ProseMirror .hljs-attr { color: #d2a8ff; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-tag, :root[data-theme="dark"] .editor .ProseMirror .hljs-name, :root[data-theme="dark"] .editor .ProseMirror .hljs-property { color: #7ee787; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-meta, :root[data-theme="dark"] .editor .ProseMirror .hljs-variable { color: #79c0ff; }
+:root[data-theme="dark"] .editor .ProseMirror .hljs-deletion { color: #ffa198; }
 .editor .ProseMirror ul,
 .editor .ProseMirror ol { padding-left: 1.5em; }
 .editor .ProseMirror blockquote {

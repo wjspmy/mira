@@ -22,6 +22,23 @@ const filePath = ref<string | null>(null);
 const dirty = ref(false);
 const status = ref("就绪");
 
+// 主题：浅/深，持久化到 localStorage，默认跟随系统
+const theme = ref<"light" | "dark">(
+  (localStorage.getItem("mira-theme") as "light" | "dark") ||
+    (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"),
+);
+function applyTheme(t: string) {
+  document.documentElement.dataset.theme = t;
+}
+function toggleTheme() {
+  theme.value = theme.value === "light" ? "dark" : "light";
+}
+watch(theme, (t) => {
+  applyTheme(t);
+  localStorage.setItem("mira-theme", t);
+});
+applyTheme(theme.value);
+
 const lowlight = createLowlight(common);
 
 const editor = useEditor({
@@ -120,6 +137,7 @@ onBeforeUnmount(() => {
     <header class="toolbar">
       <button @click="openFile">打开</button>
       <button @click="saveFile">保存</button>
+      <button class="theme-btn" @click="toggleTheme" :title="theme === 'light' ? '切换深色' : '切换浅色'">{{ theme === "light" ? "🌙" : "☀️" }}</button>
       <span class="path">{{ filePath ?? "未命名" }}</span>
       <span class="dot" :class="{ dirty }">{{ dirty ? "● 未保存" : "已保存" }}</span>
     </header>

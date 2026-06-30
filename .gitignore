@@ -6,6 +6,10 @@ dist-ssr
 # Tauri / Rust
 src-tauri/target
 
+# 日志 / 调试
+*.log
+.debug.log
+
 # OS
 .DS_Store
 Thumbs.db

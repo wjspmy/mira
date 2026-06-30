@@ -5,6 +5,7 @@
   --border: #e5e7eb;
   --code-bg: #f6f8fa;
   --content-width: 820px;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
 }
@@ -36,8 +37,9 @@ body { background: var(--bg); color: var(--fg); }
 .toolbar .dot { margin-left: auto; }
 .toolbar .dot.dirty { color: #d97706; }
 
+/* 编辑区 —— 全局 CSS，直接选 .ProseMirror（不要用 :deep，它只在 SFC scoped 样式里生效） */
 .editor { flex: 1; overflow-y: auto; }
-.editor :deep(.ProseMirror) {
+.editor .ProseMirror {
   max-width: var(--content-width);
   margin: 40px auto;
   padding: 0 24px 120px;
@@ -46,27 +48,30 @@ body { background: var(--bg); color: var(--fg); }
   line-height: 1.7;
   font-size: 16px;
 }
-.editor :deep(.ProseMirror h1) { font-size: 1.9em; margin: 0.8em 0 0.4em; }
-.editor :deep(.ProseMirror h2) { font-size: 1.5em; margin: 0.8em 0 0.4em; }
-.editor :deep(.ProseMirror h3) { font-size: 1.25em; margin: 0.8em 0 0.4em; }
-.editor :deep(.ProseMirror p) { margin: 0.6em 0; }
-.editor :deep(.ProseMirror code) {
+.editor .ProseMirror h1 { font-size: 1.9em; margin: 0.8em 0 0.4em; }
+.editor .ProseMirror h2 { font-size: 1.5em; margin: 0.8em 0 0.4em; }
+.editor .ProseMirror h3 { font-size: 1.25em; margin: 0.8em 0 0.4em; }
+.editor .ProseMirror p { margin: 0.6em 0; }
+.editor .ProseMirror code {
   background: var(--code-bg);
   padding: 2px 6px;
   border-radius: 4px;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
-.editor :deep(.ProseMirror pre) {
+.editor .ProseMirror pre {
   background: var(--code-bg);
   padding: 16px;
   border-radius: 8px;
   overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  line-height: 1.5;
 }
-.editor :deep(.ProseMirror pre code) { background: none; padding: 0; }
-.editor :deep(.ProseMirror ul),
-.editor :deep(.ProseMirror ol) { padding-left: 1.5em; }
-.editor :deep(.ProseMirror blockquote) {
+.editor .ProseMirror pre code { background: none; padding: 0; font-size: 1em; }
+.editor .ProseMirror ul,
+.editor .ProseMirror ol { padding-left: 1.5em; }
+.editor .ProseMirror blockquote {
   border-left: 3px solid var(--border);
   padding-left: 1em;
   color: var(--muted);

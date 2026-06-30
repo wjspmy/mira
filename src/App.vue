@@ -11,6 +11,7 @@ import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
+import { MathInline, MathBlock } from "./editor/math";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
@@ -51,6 +52,8 @@ const editor = useEditor({
     TableCell,
     TaskList,
     TaskItem.configure({ nested: true }),
+    MathInline,
+    MathBlock,
     Markdown.configure({ html: false, breaks: true }),
   ],
   content: "# 新文档\n\n开始写作…",

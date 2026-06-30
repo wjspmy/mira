@@ -151,3 +151,40 @@ body { background: var(--bg); color: var(--fg); }
   font-size: 12px;
   color: var(--muted);
 }
+
+/* 数学公式 */
+.editor .ProseMirror .math-inline { display: inline-block; vertical-align: middle; }
+.editor .ProseMirror .math-block {
+  display: block;
+  margin: 1em 0;
+  padding: 8px 12px;
+  overflow-x: auto;
+  cursor: text;
+  border-radius: 6px;
+}
+.editor .ProseMirror .math-block.editing { background: var(--code-bg); }
+.editor .ProseMirror .math-inline.editing { background: var(--code-bg); border-radius: 4px; }
+.editor .ProseMirror .math-edit-inline {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  outline: none;
+  min-width: 60px;
+}
+.editor .ProseMirror .math-edit {
+  width: 100%;
+  min-height: 56px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  resize: vertical;
+  outline: none;
+}

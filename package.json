@@ -12,9 +12,11 @@
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tiptap/extension-code-block-lowlight": "^2.27.2",
     "@tiptap/pm": "^2.10.3",
     "@tiptap/starter-kit": "^2.10.3",
     "@tiptap/vue-3": "^2.10.3",
+    "lowlight": "^3.3.0",
     "tiptap-markdown": "^0.8.10",
     "vue": "^3.5.13"
   },
@@ -22,7 +24,7 @@
     "@tauri-apps/cli": "^2.1.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "^5.7.2",
-    "vue-tsc": "^2.1.10",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10"
   }
 }

@@ -3,6 +3,8 @@ import { ref, watch, onBeforeUnmount } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
+import { createLowlight, common } from "lowlight";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
@@ -14,8 +16,14 @@ const filePath = ref<string | null>(null);
 const dirty = ref(false);
 const status = ref("就绪");
 
+const lowlight = createLowlight(common);
+
 const editor = useEditor({
-  extensions: [StarterKit, Markdown.configure({ html: false, breaks: true })],
+  extensions: [
+    StarterKit.configure({ codeBlock: false }),
+    CodeBlockLowlight.configure({ lowlight }),
+    Markdown.configure({ html: false, breaks: true }),
+  ],
   content: "# 新文档\n\n开始写作…",
   onUpdate: () => {
     dirty.value = true;

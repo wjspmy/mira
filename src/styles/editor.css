@@ -78,6 +78,42 @@ body { background: var(--bg); color: var(--fg); }
   margin: 0.8em 0;
 }
 
+/* 表格 */
+.editor .ProseMirror .tableWrapper { overflow-x: auto; }
+.editor .ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0.8em 0;
+}
+.editor .ProseMirror th,
+.editor .ProseMirror td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  vertical-align: top;
+  position: relative;
+}
+.editor .ProseMirror th { background: var(--code-bg); font-weight: 600; }
+.editor .ProseMirror .selectedCell { background: rgba(56, 132, 255, 0.12); }
+
+/* 任务列表 */
+.editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+.editor .ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.editor .ProseMirror ul[data-type="taskList"] li > label {
+  flex-shrink: 0;
+  height: 1.7em;
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+.editor .ProseMirror ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.editor .ProseMirror ul[data-type="taskList"] li > div > p { margin: 0; }
+.editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"] { cursor: pointer; margin: 0; }
+
 .status {
   padding: 4px 16px;
   border-top: 1px solid var(--border);

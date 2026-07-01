@@ -109,13 +109,13 @@ export const MathInline = Node.create({
         dom.classList.toggle("editing", editing);
         if (editing) {
           const input = document.createElement("input");
-          input.type = "text";
-          input.className = "math-edit math-edit-inline";
+          input.className = "math-inline-edit";
           input.value = node.attrs.latex;
+          input.size = Math.max(node.attrs.latex.length, 4);
           dom.appendChild(input);
           input.focus();
           input.select();
-          const commit = () => {
+          input.addEventListener("blur", () => {
             const v = input.value;
             const pos = getPos();
             editing = false;
@@ -123,11 +123,9 @@ export const MathInline = Node.create({
               editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { latex: v }));
             }
             render();
-          };
-          input.addEventListener("blur", commit);
+          });
           input.addEventListener("keydown", (e: KeyboardEvent) => {
-            if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-            else if (e.key === "Escape") { editing = false; render(); }
+            if (e.key === "Escape") { editing = false; render(); }
           });
         } else {
           renderKatex(dom, node.attrs.latex, false);

@@ -16,6 +16,7 @@ import { MathInline, MathBlock } from "./editor/math";
 import { serializeDocToMarkdown } from "./editor/serialize";
 import { useWorkspaceStore } from "./stores/workspace";
 import { useSessionStore } from "./stores/session";
+import { useRecentStore } from "./stores/recent";
 import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -23,6 +24,7 @@ import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
+const recent = useRecentStore();
 const status = ref("就绪");
 
 // 主题：浅/深，持久化到 localStorage，默认跟随系统
@@ -141,8 +143,11 @@ async function openFile(path?: string) {
     const id = uuid();
     session.addDoc({ id, filePath: path, rawMd: text, dirty: false });
     session.setActive(id);
+    recent.addRecent(path);
     status.value = `已打开 ${path}`;
   } catch (e) {
+    // 文件可能已删除/移动，从最近列表清理
+    if (path) recent.removeRecent(path);
     status.value = `打开失败：${e}`;
   }
 }
@@ -231,17 +236,35 @@ onBeforeUnmount(() => {
     </header>
     <Tabs v-if="session.docs.length" @close="closeDoc" />
     <div class="body">
-      <aside class="sidebar" v-if="ws.rootPath">
-        <div class="sidebar-header" :title="ws.rootPath">{{ ws.rootName }}</div>
-        <div class="tree">
-          <FileTreeNode
-            v-for="child in ws.childrenOf(ws.rootPath) || []"
-            :key="child.path"
-            :node="child"
-            :depth="0"
-            @open-file="openFile"
-          />
-          <div v-if="ws.childrenOf(ws.rootPath) === null" class="tree-loading">加载中…</div>
+      <aside class="sidebar">
+        <section class="sidebar-section" v-if="recent.recentPaths.length">
+          <div class="sidebar-header">最近打开</div>
+          <div
+            v-for="p in recent.recentPaths"
+            :key="p"
+            class="tree-row recent-row"
+            :title="p"
+            @click="openFile(p)"
+          >
+            <span class="chevron">·</span>
+            <span class="name">{{ basename(p) }}</span>
+          </div>
+        </section>
+        <section v-if="ws.rootPath">
+          <div class="sidebar-header" :title="ws.rootPath">{{ ws.rootName }}</div>
+          <div class="tree">
+            <FileTreeNode
+              v-for="child in ws.childrenOf(ws.rootPath) || []"
+              :key="child.path"
+              :node="child"
+              :depth="0"
+              @open-file="openFile"
+            />
+            <div v-if="ws.childrenOf(ws.rootPath) === null" class="tree-loading">加载中…</div>
+          </div>
+        </section>
+        <div v-if="!ws.rootPath && !recent.recentPaths.length" class="empty-hint">
+          打开一个文件夹或文件开始
         </div>
       </aside>
       <EditorContent v-if="editor" :editor="editor" class="mira-editor editor" />

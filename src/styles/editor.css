@@ -63,6 +63,8 @@ body { background: var(--bg); color: var(--fg); }
   background: var(--bg);
   font-size: 13px;
 }
+.sidebar-section { border-bottom: 1px solid var(--border); }
+.empty-hint { padding: 16px 12px; color: var(--muted); font-size: 12px; }
 .sidebar-header {
   padding: 8px 10px;
   font-weight: 600;

@@ -11,7 +11,9 @@ import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
+import Link from "@tiptap/extension-link";
 import { MathInline, MathBlock } from "./editor/math";
+import { serializeDocToMarkdown } from "./editor/serialize";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
@@ -52,6 +54,7 @@ const editor = useEditor({
     TableCell,
     TaskList,
     TaskItem.configure({ nested: true }),
+    Link.configure({ openOnClick: false }),
     MathInline,
     MathBlock,
     Markdown.configure({ html: false, breaks: true }),
@@ -64,9 +67,10 @@ const editor = useEditor({
 });
 
 function getMarkdown(): string {
-  // tiptap-markdown 注入的 storage，方法名为 getMarkdown()（不是 get()）
-  const md = (editor.value?.storage as any).markdown;
-  return md?.getMarkdown?.() ?? "";
+  // 用自研序列化器（设计 §14.3）严格、规范化输出，保证 git diff 只反映真实编辑。
+  const doc = editor.value?.state.doc;
+  if (!doc) return "";
+  return serializeDocToMarkdown(doc);
 }
 
 async function openFile() {

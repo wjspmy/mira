@@ -4,6 +4,7 @@
   --muted: #6b7280;
   --border: #e5e7eb;
   --code-bg: #f6f8fa;
+  --accent: #2563eb;
   --content-width: 820px;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
@@ -26,6 +27,31 @@ html, body, #app { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  color: var(--muted);
+}
+.tab:hover { background: var(--code-bg); }
+.tab.active { color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.tab-dot { color: #d97706; font-size: 9px; }
+.tab-close { color: var(--muted); padding: 0 2px; font-size: 15px; line-height: 1; }
+.tab-close:hover { color: var(--fg); }
 
 .body { flex: 1; display: flex; min-height: 0; }
 

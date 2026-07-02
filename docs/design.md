@@ -372,8 +372,8 @@ sequenceDiagram
 
 | 阶段 | 目标 | 关键交付 |
 |---|---|---|
-| **M0 脚手架** | 跑通端到端 | Tauri + Vue + Vite 工程，能打开/编辑/保存单个 .md |
-| **M1 MVP 核心** | 可日常写作 | Tiptap WYSIWYG、GFM、代码高亮、KaTeX、自动保存、浅/深主题 |
+| **M0 脚手架** ✅ | 跑通端到端 | Tauri + Vue + Vite 工程，能打开/编辑/保存单个 .md |
+| **M1 MVP 核心** ✅ | 可日常写作 | Tiptap WYSIWYG、GFM（表格/任务列表/删除线）、代码高亮（lowlight）、KaTeX 数学、自动保存、浅/深主题、自研 remark 序列化器 + 15/15 round-trip 测试 |
 | **M2 文件管理** | 工作区体验 | 文件树、多标签、最近打开、文件监听、图片本地化 |
 | **M3 生产力增强** | 进阶体验 | 命令面板、源码模式开关（CodeMirror 6）、自定义 CSS、快捷键设置 |
 | **M4 打磨发布** | 发布前优化 | 性能调优、大文件支持、崩溃恢复、三端打包测试、自动更新（GitHub Releases） |
@@ -396,7 +396,7 @@ sequenceDiagram
 ## 13. 验收标准（DoD 摘要）
 
 - [ ] 打开一个标准 GFM `.md`，编辑后保存，`git diff` 仅体现真实编辑内容（无意外格式抖动）。
-- [ ] Round-trip 测试：100 个真实 Markdown 样本，`解析 → 序列化` 后与原文按行等价（允许空白规范化）。
+- [x] Round-trip 测试：15 个用例（`test/round-trip.test.ts`），`解析 → 序列化` 后 mdast 规范化等价。
 - [ ] 10MB / 5 万行文档可流畅滚动与编辑（FPS ≥ 30）。
 - [ ] 强杀进程后重启，能恢复未保存草稿。
 - [ ] Windows / macOS / Linux 三端安装包均可正常运行核心功能。

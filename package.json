@@ -27,6 +27,7 @@
     "@tiptap/vue-3": "^2.10.3",
     "katex": "^0.17.0",
     "lowlight": "^3.3.0",
+    "pinia": "^3.0.4",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",

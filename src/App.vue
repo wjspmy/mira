@@ -14,6 +14,8 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import { MathInline, MathBlock } from "./editor/math";
 import { serializeDocToMarkdown } from "./editor/serialize";
+import { useWorkspaceStore } from "./stores/workspace";
+import FileTreeNode from "./components/FileTree.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
@@ -24,6 +26,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 const filePath = ref<string | null>(null);
 const dirty = ref(false);
 const status = ref("就绪");
+const ws = useWorkspaceStore();
 
 // 主题：浅/深，持久化到 localStorage，默认跟随系统
 const theme = ref<"light" | "dark">(
@@ -73,14 +76,16 @@ function getMarkdown(): string {
   return serializeDocToMarkdown(doc);
 }
 
-async function openFile() {
-  const selected = await openDialog({
-    multiple: false,
-    filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
-  });
-  if (!selected) return;
-  const path = typeof selected === "string" ? selected : (selected as any).path;
-  if (!path) return;
+async function openFile(path?: string) {
+  if (!path) {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+    });
+    if (!selected) return;
+    path = typeof selected === "string" ? selected : (selected as any).path;
+    if (!path) return;
+  }
   try {
     const text = await invoke<string>("read_text_file", { path });
     filePath.value = path;
@@ -142,13 +147,29 @@ onBeforeUnmount(() => {
 <template>
   <div class="app">
     <header class="toolbar">
-      <button @click="openFile">打开</button>
+      <button @click="ws.openFolder()">打开文件夹</button>
+      <button @click="openFile()">打开</button>
       <button @click="saveFile">保存</button>
       <button class="theme-btn" @click="toggleTheme" :title="theme === 'light' ? '切换深色' : '切换浅色'">{{ theme === "light" ? "🌙" : "☀️" }}</button>
       <span class="path">{{ filePath ?? "未命名" }}</span>
       <span class="dot" :class="{ dirty }">{{ dirty ? "● 未保存" : "已保存" }}</span>
     </header>
-    <EditorContent v-if="editor" :editor="editor" class="mira-editor editor" />
+    <div class="body">
+      <aside class="sidebar" v-if="ws.rootPath">
+        <div class="sidebar-header" :title="ws.rootPath">{{ ws.rootName }}</div>
+        <div class="tree">
+          <FileTreeNode
+            v-for="child in ws.childrenOf(ws.rootPath) || []"
+            :key="child.path"
+            :node="child"
+            :depth="0"
+            @open-file="openFile"
+          />
+          <div v-if="ws.childrenOf(ws.rootPath) === null" class="tree-loading">加载中…</div>
+        </div>
+      </aside>
+      <EditorContent v-if="editor" :editor="editor" class="mira-editor editor" />
+    </div>
     <footer class="status">{{ status }}</footer>
   </div>
 </template>

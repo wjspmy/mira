@@ -2,7 +2,7 @@
 import { useSessionStore } from "../stores/session";
 
 const session = useSessionStore();
-defineEmits<{ (e: "close", id: string): void }>();
+defineEmits<{ (e: "close", id: string): void; (e: "switch", id: string): void }>();
 
 function name(d: { filePath: string | null }): string {
   if (!d.filePath) return "未命名";
@@ -18,7 +18,7 @@ function name(d: { filePath: string | null }): string {
       :key="d.id"
       class="tab"
       :class="{ active: d.id === session.activeId }"
-      @click="session.setActive(d.id)"
+      @click="$emit('switch', d.id)"
       :title="d.filePath ?? '未命名'"
     >
       <span class="tab-dot" :class="{ dirty: d.dirty }">{{ d.dirty ? "●" : "" }}</span>

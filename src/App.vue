@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, computed } from "vue";
+import { ref, watch, onBeforeUnmount, onMounted, computed } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
@@ -21,6 +21,7 @@ import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
@@ -87,6 +88,10 @@ function basename(p: string) {
   return a[a.length - 1];
 }
 
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
 const activeDoc = computed(() => session.activeDoc);
 const filePath = computed(() => session.activeDoc?.filePath ?? null);
 const dirty = computed(() => session.activeDoc?.dirty ?? false);
@@ -95,32 +100,33 @@ function uuid() {
   return (crypto as any).randomUUID?.() ?? String(Date.now()) + Math.random();
 }
 
-// 切换标签：把当前编辑器内容序列化存入旧 doc，加载新 doc 的 rawMd
-watch(
-  () => session.activeId,
-  (newId, oldId) => {
-    if (newId === oldId) return;
-    // 取消待执行的自动保存，避免它把切换后的新内容误写到旧 doc 的文件
-    if (timer) { clearTimeout(timer); timer = null; }
-    // 序列化旧 doc（编辑器此刻仍是旧内容）
-    if (oldId) {
-      const old = session.docs.find((d) => d.id === oldId);
-      if (old) old.rawMd = getMarkdown();
-    }
-    // 加载新 doc
-    if (newId) {
-      const next = session.docs.find((d) => d.id === newId);
-      loadIntoEditor(next?.rawMd ?? "");
-    } else {
-      loadIntoEditor("");
-    }
-  },
-);
+// 显式切换：先同步保存旧 doc 的 markdown，再 setActive，再 setContent 新 doc。
+// TODO: undo/redo 跨标签（setContent 不清历史）；EditorState.create 清历史会触发选区还原 bug，待解。
+async function switchTo(newId: string | null) {
+  const oldId = session.activeId;
+  if (newId === oldId) return;
+  if (timer) { clearTimeout(timer); timer = null; }
+  // 保存 outgoing：序列化为 markdown 字符串（不可变）
+  if (oldId && editor.value) {
+    const old = session.docs.find((d) => d.id === oldId);
+    if (old) old.rawMd = getMarkdown();
+  }
+  session.setActive(newId);
+  // 恢复 incoming
+  loading = true;
+  if (newId && editor.value) {
+    const next = session.docs.find((d) => d.id === newId);
+    if (next) editor.value.commands.setContent(next.rawMd || "");
+  } else if (editor.value) {
+    editor.value.commands.setContent("");
+  }
+  loading = false;
+}
 
 function newDoc() {
   const id = uuid();
   session.addDoc({ id, filePath: null, rawMd: "# 新文档\n\n开始写作…", dirty: false });
-  session.setActive(id);
+  switchTo(id);
 }
 
 async function openFile(path?: string) {
@@ -137,12 +143,18 @@ async function openFile(path?: string) {
     const text = await invoke<string>("read_text_file", { path });
     const existing = session.findDocByPath(path);
     if (existing) {
-      session.setActive(existing.id);
+      await switchTo(existing.id);
       return;
     }
     const id = uuid();
     session.addDoc({ id, filePath: path, rawMd: text, dirty: false });
-    session.setActive(id);
+    // 监听该文件所在目录（散文件也要监听外部改动，设计 §16.4；watch 命令幂等）
+    const sep = path.includes("\\") ? "\\" : "/";
+    const dir = path.lastIndexOf(sep) >= 0 ? path.slice(0, path.lastIndexOf(sep)) : "";
+    if (dir) {
+      try { await invoke("watch", { root: dir }); } catch { /* ignore */ }
+    }
+    await switchTo(id);
     recent.addRecent(path);
     status.value = `已打开 ${path}`;
   } catch (e) {
@@ -186,13 +198,13 @@ async function closeDoc(id: string) {
   const neighbor = wasActive ? session.docs[idx + 1] || session.docs[idx - 1] || null : null;
   session.removeDoc(id);
   if (wasActive) {
-    session.setActive(neighbor ? neighbor.id : null);
-    // watch 会处理编辑器切换（旧 doc 已移除，跳过序列化，加载 neighbor 或清空）
+    await switchTo(neighbor ? neighbor.id : null);
   }
 }
 
 // 防抖自动保存（仅对已命名文档）
 let timer: ReturnType<typeof setTimeout> | null = null;
+let unlistenFs: UnlistenFn | null = null;
 function scheduleAutosave() {
   const doc = session.activeDoc;
   if (!doc || !doc.filePath) return;
@@ -217,8 +229,78 @@ watch([filePath, dirty], () => {
   document.title = dirty.value ? `Mira — ${name} •` : `Mira — ${name}`;
 });
 
+const fsTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+const askingDocs = new Set<string>();
+
+async function handleFsChanged(path: string) {
+  const np = normPath(path);
+  const doc = session.docs.find((d) => d.filePath && normPath(d.filePath) === np);
+  if (!doc) return; // 不在任何已打开 tab 中，忽略
+  if (doc === session.activeDoc) {
+    if (!doc.dirty) {
+      // 无未保存修改：静默重载
+      try {
+        const text = await invoke<string>("read_text_file", { path });
+        doc.rawMd = text;
+        loadIntoEditor(text);
+        status.value = "文件已被外部修改，已重新加载";
+      } catch (err) {
+        status.value = `重载失败：${err}`;
+      }
+    } else {
+      // 有未保存修改：提示（per-doc 锁，避免 notify 突发事件弹多次）
+      if (askingDocs.has(doc.id)) return;
+      askingDocs.add(doc.id);
+      try {
+        const ok = await ask(`文件 ${basename(path)} 已被外部修改，是否重新加载？（丢弃当前未保存修改）`, {
+          title: "Mira",
+          kind: "warning",
+        });
+        if (ok) {
+          try {
+            const text = await invoke<string>("read_text_file", { path });
+            doc.rawMd = text;
+            loadIntoEditor(text);
+            doc.dirty = false;
+            status.value = `已重新加载 ${path}`;
+          } catch (err) {
+            status.value = `重载失败：${err}`;
+          }
+        } else {
+          status.value = "已保留本地修改（外部改动未加载）";
+        }
+      } finally {
+        askingDocs.delete(doc.id);
+      }
+    }
+  } else {
+    // 后台 tab：若无未保存修改，刷新其 rawMd（下次切入用新内容）
+    if (!doc.dirty) {
+      try {
+        doc.rawMd = await invoke<string>("read_text_file", { path });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+onMounted(async () => {
+  // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
+  unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
+    const { path } = e.payload;
+    // 按路径去抖 300ms，合并 notify 对一次保存触发的多次事件
+    if (fsTimers[path]) clearTimeout(fsTimers[path]);
+    fsTimers[path] = setTimeout(() => {
+      delete fsTimers[path];
+      handleFsChanged(path);
+    }, 300);
+  });
+});
+
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer);
+  if (unlistenFs) unlistenFs();
   editor.value?.destroy();
 });
 </script>
@@ -234,7 +316,7 @@ onBeforeUnmount(() => {
       <span class="path">{{ filePath ?? "未命名" }}</span>
       <span class="dot" :class="{ dirty }">{{ dirty ? "● 未保存" : "已保存" }}</span>
     </header>
-    <Tabs v-if="session.docs.length" @close="closeDoc" />
+    <Tabs v-if="session.docs.length" @close="closeDoc" @switch="switchTo" />
     <div class="body">
       <aside class="sidebar">
         <section class="sidebar-section" v-if="recent.recentPaths.length">

@@ -34,12 +34,26 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function setRoot(path: string) {
+    // 切换根：停掉旧根监听
+    if (rootPath.value && rootPath.value !== path) {
+      try {
+        await invoke("unwatch", { root: rootPath.value });
+      } catch (e) {
+        console.error("unwatch failed", e);
+      }
+    }
     rootPath.value = path;
     rootName.value = path.split(/[\\/]/).pop() || path;
     childrenMap.value = {};
     expanded.value = new Set();
     await loadDir(path);
     expanded.value = new Set([path]); // 默认展开根
+    // 启动文件监听（设计 §16.5）
+    try {
+      await invoke("watch", { root: path });
+    } catch (e) {
+      console.error("watch failed", e);
+    }
   }
 
   async function toggle(path: string) {

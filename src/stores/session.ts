@@ -5,8 +5,10 @@ import { ref, computed } from "vue";
 export interface Doc {
   id: string;
   filePath: string | null; // null = 未命名新文档
-  rawMd: string; // 最近一次序列化的 Markdown（切换/保存时更新）
+  rawMd: string; // 最近一次序列化的 Markdown（保存/外部重载时更新）
   dirty: boolean; // 编辑器是否有未保存改动
+  // ProseMirror 文档 JSON 快照（不可变）。切入时据此新建 EditorState（清空历史，独立 undo/redo）
+  docJSON?: any | null;
 }
 
 export const useSessionStore = defineStore("session", () => {

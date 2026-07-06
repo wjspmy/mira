@@ -1,7 +1,11 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::Mutex;
+use std::collections::HashMap;
 use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+use notify::{Watcher, RecursiveMode, EventKind, RecommendedWatcher};
 
 /// 读取文本文件（UTF-8）。M0 基础实现；
 /// TODO(M2)：编码探测 / BOM / GBK 回退（设计 §16.3）。
@@ -10,10 +14,20 @@ fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(Path::new(&path)).map_err(|e| e.to_string())
 }
 
+/// 文件监听状态（设计 §16.5）：watchers 按根路径存储；recent_writes 用于过滤自身写入。
+struct WatcherState {
+    watchers: std::sync::Arc<std::sync::Mutex<HashMap<String, RecommendedWatcher>>>,
+    recent_writes: std::sync::Arc<std::sync::Mutex<HashMap<String, std::time::Instant>>>,
+}
+
 /// 原子写入：临时文件 + rename，避免写一半断电损坏（设计 §10.2 / §16.1）。
 /// TODO(M2)：沙箱路径校验、行尾策略（§16.3 / §16.4）。
 #[tauri::command]
-fn write_text_file(path: String, content: String) -> Result<(), String> {
+fn write_text_file(path: String, content: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
+    // 记录自身写入，供文件监听过滤（避免 Mira 自己保存触发"外部改动"提示）
+    if let Ok(mut rw) = state.recent_writes.lock() {
+        rw.insert(path.clone(), std::time::Instant::now());
+    }
     let target = Path::new(&path);
     let dir = target.parent().ok_or_else(|| "无效路径".to_string())?;
     let file_name = target
@@ -76,10 +90,77 @@ fn list_dir(path: String, ignore: Vec<String>) -> Result<Vec<FileNode>, String> 
     Ok(v)
 }
 
+/// 监听工作区（递归），外部改动时 emit "fs:changed" {path, kind}（设计 §16.5 / §9.4）。
+/// 过滤自身 500ms 内的写入。重复监听同一根是 no-op。
+#[tauri::command]
+fn watch(root: String, app: AppHandle, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
+    let mut watchers = state.watchers.lock().map_err(|e| e.to_string())?;
+    if watchers.contains_key(&root) {
+        return Ok(());
+    }
+    let recent = state.recent_writes.clone();
+    let app2 = app.clone();
+    let mut watcher = RecommendedWatcher::new(
+        move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(ev) = res {
+                let now = std::time::Instant::now();
+                // 自身 500ms 内写入的路径跳过
+                let self_touched = if let Ok(rw) = recent.lock() {
+                    ev.paths.iter().any(|p| {
+                        let key = p.to_string_lossy();
+                        rw.get(&*key)
+                            .map_or(false, |t| now.duration_since(*t).as_millis() < 500)
+                    })
+                } else {
+                    false
+                };
+                if self_touched {
+                    return;
+                }
+                for p in &ev.paths {
+                    let kind = match ev.kind {
+                        EventKind::Create(_) => "create",
+                        EventKind::Modify(_) => "modify",
+                        EventKind::Remove(_) => "delete",
+                        _ => "other",
+                    };
+                    let _ = app2.emit(
+                        "fs:changed",
+                        serde_json::json!({ "path": p.to_string_lossy(), "kind": kind }),
+                    );
+                }
+            }
+        },
+        notify::Config::default(),
+    )
+    .map_err(|e| {
+        e.to_string()
+    })?;
+    watcher
+        .watch(Path::new(&root), RecursiveMode::Recursive)
+        .map_err(|e| {
+            e.to_string()
+        })?;
+    watchers.insert(root.clone(), watcher);
+    Ok(())
+}
+
+/// 停止监听某根路径。
+#[tauri::command]
+fn unwatch(root: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
+    let mut watchers = state.watchers.lock().map_err(|e| e.to_string())?;
+    watchers.remove(&root);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(WatcherState {
+            watchers: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+            recent_writes: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -93,7 +174,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_text_file,
             write_text_file,
-            list_dir
+            list_dir,
+            watch,
+            unwatch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,6 +12,7 @@ export interface FileNode {
 }
 
 const IGNORE = ["node_modules", "target", ".git", "dist", ".vite"];
+const WORKSPACE_ROOT_KEY = "mira-workspace-root";
 
 export const useWorkspaceStore = defineStore("workspace", () => {
   const rootPath = ref<string | null>(null);
@@ -54,6 +55,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     } catch (e) {
       console.error("watch failed", e);
     }
+    localStorage.setItem(WORKSPACE_ROOT_KEY, path);
   }
 
   async function toggle(path: string) {
@@ -84,5 +86,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return path;
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, toggle, isExpanded, childrenOf, openFolder };
+  function savedRoot() {
+    return localStorage.getItem(WORKSPACE_ROOT_KEY);
+  }
+
+  function clearSavedRoot() {
+    localStorage.removeItem(WORKSPACE_ROOT_KEY);
+  }
+
+  return { rootPath, rootName, expanded, setRoot, loadDir, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
 });

@@ -28,6 +28,7 @@ const ws = useWorkspaceStore();
 const session = useSessionStore();
 const recent = useRecentStore();
 const status = ref("就绪");
+let restoringSession = false;
 
 // 主题：浅/深，持久化到 localStorage，默认跟随系统
 const theme = ref<"light" | "dark">(
@@ -104,6 +105,10 @@ function syncEditorDocDir(path: string | null | undefined) {
   editor.value.storage.miraDocDir = path ? dirname(path) || undefined : undefined;
 }
 
+function persistSessionSoon() {
+  if (!restoringSession) session.persistSession();
+}
+
 const activeDoc = computed(() => session.activeDoc);
 const filePath = computed(() => session.activeDoc?.filePath ?? null);
 const dirty = computed(() => session.activeDoc?.dirty ?? false);
@@ -135,6 +140,7 @@ async function switchTo(newId: string | null) {
     editor.value.commands.setContent("");
   }
   loading = false;
+  persistSessionSoon();
 }
 
 function newDoc() {
@@ -170,6 +176,7 @@ async function openFile(path?: string) {
     }
     await switchTo(id);
     recent.addRecent(path);
+    persistSessionSoon();
     status.value = `已打开 ${path}`;
   } catch (e) {
     // 文件可能已删除/移动，从最近列表清理
@@ -200,6 +207,7 @@ async function saveFile() {
     await invoke("write_text_file", { path, content: md });
     doc.rawMd = md;
     doc.dirty = false;
+    persistSessionSoon();
     status.value = `已保存 ${path}`;
   } catch (e) {
     status.value = `保存失败：${e}`;
@@ -218,6 +226,8 @@ async function closeDoc(id: string) {
   session.removeDoc(id);
   if (wasActive) {
     await switchTo(neighbor ? neighbor.id : null);
+  } else {
+    persistSessionSoon();
   }
 }
 
@@ -314,6 +324,39 @@ function onImageError(e: Event) {
   status.value = message || "图片插入失败";
 }
 
+async function restoreLastSession() {
+  const savedRoot = ws.savedRoot();
+  if (savedRoot) {
+    try {
+      await ws.setRoot(savedRoot);
+    } catch (e) {
+      ws.clearSavedRoot();
+      status.value = `恢复工作区失败：${e}`;
+    }
+  }
+
+  const snap = session.loadSnapshot();
+  if (!snap.openPaths.length) return;
+  restoringSession = true;
+  let restored = 0;
+  try {
+    for (const p of snap.openPaths) {
+      await openFile(p);
+      if (session.findDocByPath(p)) restored++;
+    }
+    if (snap.activePath) {
+      const active = session.findDocByPath(snap.activePath);
+      if (active) await switchTo(active.id);
+    }
+  } finally {
+    restoringSession = false;
+    session.persistSession();
+  }
+  status.value = restored === snap.openPaths.length
+    ? `已恢复 ${restored} 个文件`
+    : `已恢复 ${restored}/${snap.openPaths.length} 个文件`;
+}
+
 onMounted(async () => {
   window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.addEventListener("mira:image-error", onImageError as EventListener);
@@ -327,6 +370,7 @@ onMounted(async () => {
       handleFsChanged(path);
     }, 300);
   });
+  await restoreLastSession();
 });
 
 onBeforeUnmount(() => {

@@ -11,6 +11,17 @@ export interface Doc {
   docJSON?: any | null;
 }
 
+export interface SessionSnapshot {
+  openPaths: string[];
+  activePath: string | null;
+}
+
+const SESSION_KEY = "mira-session";
+
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
 export const useSessionStore = defineStore("session", () => {
   const docs = ref<Doc[]>([]);
   const activeId = ref<string | null>(null);
@@ -28,7 +39,8 @@ export const useSessionStore = defineStore("session", () => {
     activeId.value = id;
   }
   function findDocByPath(path: string) {
-    return docs.value.find((d) => d.filePath === path) ?? null;
+    const np = normPath(path);
+    return docs.value.find((d) => d.filePath && normPath(d.filePath) === np) ?? null;
   }
   function markActiveDirty(v: boolean) {
     const d = activeDoc.value;
@@ -39,5 +51,48 @@ export const useSessionStore = defineStore("session", () => {
     if (d) d.rawMd = md;
   }
 
-  return { docs, activeId, activeDoc, dirtyCount, addDoc, removeDoc, setActive, findDocByPath, markActiveDirty, updateActiveMd };
+  function snapshot(): SessionSnapshot {
+    const seen = new Set<string>();
+    const openPaths: string[] = [];
+    for (const d of docs.value) {
+      if (!d.filePath) continue;
+      const key = normPath(d.filePath);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      openPaths.push(d.filePath);
+    }
+    return { openPaths, activePath: activeDoc.value?.filePath ?? null };
+  }
+
+  function persistSession() {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(snapshot()));
+  }
+
+  function loadSnapshot(): SessionSnapshot {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+      if (!raw || !Array.isArray(raw.openPaths)) return { openPaths: [], activePath: null };
+      const openPaths = raw.openPaths.filter((p: unknown) => typeof p === "string");
+      const activePath = typeof raw.activePath === "string" ? raw.activePath : null;
+      return { openPaths, activePath };
+    } catch {
+      return { openPaths: [], activePath: null };
+    }
+  }
+
+  return {
+    docs,
+    activeId,
+    activeDoc,
+    dirtyCount,
+    addDoc,
+    removeDoc,
+    setActive,
+    findDocByPath,
+    markActiveDirty,
+    updateActiveMd,
+    snapshot,
+    persistSession,
+    loadSnapshot,
+  };
 });

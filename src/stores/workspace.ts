@@ -23,6 +23,12 @@ function parentDir(path: string): string {
   return path.lastIndexOf(sep) >= 0 ? path.slice(0, path.lastIndexOf(sep)) : "";
 }
 
+const IGNORED_SEGMENTS = new Set(IGNORE);
+
+function isIgnoredPath(path: string): boolean {
+  return path.replace(/\\/g, "/").split("/").some((seg) => IGNORED_SEGMENTS.has(seg));
+}
+
 export const useWorkspaceStore = defineStore("workspace", () => {
   const rootPath = ref<string | null>(null);
   const rootName = ref("");
@@ -98,12 +104,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function refreshForPath(path: string) {
-    if (!rootPath.value || !isUnderRoot(path)) return;
+    if (!rootPath.value || !isUnderRoot(path) || isIgnoredPath(path)) return;
     const dirs = new Set<string>();
     const root = rootPath.value;
     const parent = parentDir(path);
     if (normPath(path) === normPath(root)) dirs.add(root);
-    if (parent && isUnderRoot(parent)) dirs.add(parent);
+    // 只刷新已经加载过的目录，避免未展开目录因后台事件触发大量 IO/渲染。
+    if (parent && parent in childrenMap.value) dirs.add(parent);
     if (path in childrenMap.value) dirs.add(path);
     for (const dir of dirs) {
       await refreshDir(dir);

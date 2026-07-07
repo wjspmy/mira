@@ -362,12 +362,15 @@ onMounted(async () => {
   window.addEventListener("mira:image-error", onImageError as EventListener);
   // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
   unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
-    const { path } = e.payload;
+    const { path, kind } = e.payload;
     // 按路径去抖 300ms，合并 notify 对一次保存触发的多次事件
     if (fsTimers[path]) clearTimeout(fsTimers[path]);
     fsTimers[path] = setTimeout(async () => {
       delete fsTimers[path];
-      try { await ws.refreshForPath(path); } catch { /* ignore */ }
+      // 文件树只需要结构变化；普通 modify 只交给已打开文档的重载逻辑，避免事件风暴卡顿。
+      if (kind === "create" || kind === "delete") {
+        try { await ws.refreshForPath(path); } catch { /* ignore */ }
+      }
       handleFsChanged(path);
     }, 300);
   });

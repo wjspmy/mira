@@ -124,7 +124,7 @@ fn write_asset(dir: String, name: String, bytes: Vec<u8>) -> Result<String, Stri
 }
 
 /// 监听工作区（递归），外部改动时 emit "fs:changed" {path, kind}（设计 §16.5 / §9.4）。
-/// 过滤自身 500ms 内的写入。重复监听同一根是 no-op。
+/// 过滤自身 500ms 内的写入，并忽略常见高频构建/依赖目录。重复监听同一根是 no-op。
 #[tauri::command]
 fn watch(root: String, app: AppHandle, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
     let mut watchers = state.watchers.lock().map_err(|e| e.to_string())?;
@@ -150,7 +150,16 @@ fn watch(root: String, app: AppHandle, state: tauri::State<'_, WatcherState>) ->
                 if self_touched {
                     return;
                 }
+                fn ignored_path(p: &Path) -> bool {
+                    p.components().any(|c| {
+                        let s = c.as_os_str().to_string_lossy();
+                        matches!(s.as_ref(), "node_modules" | "target" | ".git" | "dist" | ".vite")
+                    })
+                }
                 for p in &ev.paths {
+                    if ignored_path(p) {
+                        continue;
+                    }
                     let kind = match ev.kind {
                         EventKind::Create(_) => "create",
                         EventKind::Modify(_) => "modify",

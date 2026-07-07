@@ -59,6 +59,18 @@ const cases: Case[] = [
     md: "参见 [Mira](https://example.com) 文档。\n",
   },
   {
+    name: "独立图片",
+    md: "![alt](./assets/a.png)\n",
+  },
+  {
+    name: "图片标题",
+    md: "![alt](./assets/a.png \"title\")\n",
+  },
+  {
+    name: "远程图片",
+    md: "![remote](https://example.com/a.png)\n",
+  },
+  {
     name: "硬换行",
     md: "第一行  \n第二行\n",
   },

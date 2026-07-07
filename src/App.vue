@@ -365,8 +365,9 @@ onMounted(async () => {
     const { path } = e.payload;
     // 按路径去抖 300ms，合并 notify 对一次保存触发的多次事件
     if (fsTimers[path]) clearTimeout(fsTimers[path]);
-    fsTimers[path] = setTimeout(() => {
+    fsTimers[path] = setTimeout(async () => {
       delete fsTimers[path];
+      try { await ws.refreshForPath(path); } catch { /* ignore */ }
       handleFsChanged(path);
     }, 300);
   });

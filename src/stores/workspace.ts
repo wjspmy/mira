@@ -14,6 +14,15 @@ export interface FileNode {
 const IGNORE = ["node_modules", "target", ".git", "dist", ".vite"];
 const WORKSPACE_ROOT_KEY = "mira-workspace-root";
 
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
+function parentDir(path: string): string {
+  const sep = path.includes("\\") ? "\\" : "/";
+  return path.lastIndexOf(sep) >= 0 ? path.slice(0, path.lastIndexOf(sep)) : "";
+}
+
 export const useWorkspaceStore = defineStore("workspace", () => {
   const rootPath = ref<string | null>(null);
   const rootName = ref("");
@@ -23,6 +32,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function loadDir(path: string) {
     if (path in childrenMap.value) return; // 已加载（含加载中标记）
+    await refreshDir(path);
+  }
+
+  async function refreshDir(path: string) {
     // 先标记为 null（加载中），避免重复请求
     childrenMap.value = { ...childrenMap.value, [path]: null };
     try {
@@ -77,6 +90,26 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return childrenMap.value[path] ?? null;
   }
 
+  function isUnderRoot(path: string) {
+    if (!rootPath.value) return false;
+    const root = normPath(rootPath.value);
+    const target = normPath(path);
+    return target === root || target.startsWith(root + "/");
+  }
+
+  async function refreshForPath(path: string) {
+    if (!rootPath.value || !isUnderRoot(path)) return;
+    const dirs = new Set<string>();
+    const root = rootPath.value;
+    const parent = parentDir(path);
+    if (normPath(path) === normPath(root)) dirs.add(root);
+    if (parent && isUnderRoot(parent)) dirs.add(parent);
+    if (path in childrenMap.value) dirs.add(path);
+    for (const dir of dirs) {
+      await refreshDir(dir);
+    }
+  }
+
   async function openFolder() {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
@@ -94,5 +127,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.removeItem(WORKSPACE_ROOT_KEY);
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
+  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
 });

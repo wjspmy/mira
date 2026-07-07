@@ -214,6 +214,41 @@ async function saveFile() {
   }
 }
 
+async function createWorkspaceFile() {
+  if (!ws.rootPath) {
+    status.value = "请先打开文件夹";
+    return;
+  }
+  const name = window.prompt("文件名", "untitled.md");
+  if (name === null) return;
+  try {
+    const path = await ws.createFileInRoot(name);
+    await openFile(path);
+    status.value = `已新建文件 ${path}`;
+  } catch (e) {
+    const message = `新建文件失败：${e instanceof Error ? e.message : String(e)}`;
+    status.value = message;
+    window.alert(message);
+  }
+}
+
+async function createWorkspaceFolder() {
+  if (!ws.rootPath) {
+    status.value = "请先打开文件夹";
+    return;
+  }
+  const name = window.prompt("文件夹名", "新建文件夹");
+  if (name === null) return;
+  try {
+    const path = await ws.createFolderInRoot(name);
+    status.value = `已新建文件夹 ${path}`;
+  } catch (e) {
+    const message = `新建文件夹失败：${e instanceof Error ? e.message : String(e)}`;
+    status.value = message;
+    window.alert(message);
+  }
+}
+
 async function closeDoc(id: string) {
   const doc = session.docs.find((d) => d.id === id);
   if (doc?.dirty && !(await ask("该文档有未保存修改，确认关闭？", { title: "Mira", kind: "warning" }))) {
@@ -414,7 +449,11 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <section v-if="ws.rootPath">
-          <div class="sidebar-header" :title="ws.rootPath">{{ ws.rootName }}</div>
+          <div class="sidebar-header workspace-header" :title="ws.rootPath">
+            <span class="workspace-name">{{ ws.rootName }}</span>
+            <button @click.stop="createWorkspaceFile" title="新建文件">+文件</button>
+            <button @click.stop="createWorkspaceFolder" title="新建文件夹">+夹</button>
+          </div>
           <div class="tree">
             <FileTreeNode
               v-for="child in ws.childrenOf(ws.rootPath) || []"

@@ -23,6 +23,24 @@ function parentDir(path: string): string {
   return path.lastIndexOf(sep) >= 0 ? path.slice(0, path.lastIndexOf(sep)) : "";
 }
 
+function joinPath(dir: string, name: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  return dir.replace(/[\\/]+$/, "") + sep + name;
+}
+
+function normalizeFileName(name: string): string {
+  const n = validateName(name);
+  return n.includes(".") ? n : `${n}.md`;
+}
+
+function validateName(name: string): string {
+  const n = name.trim();
+  if (!n) throw new Error("名称不能为空");
+  if (/[\\/]/.test(n)) throw new Error("名称不能包含路径分隔符");
+  if (/[<>:"|?*]/.test(n)) throw new Error("名称包含非法字符");
+  return n;
+}
+
 const IGNORED_SEGMENTS = new Set(IGNORE);
 
 function isIgnoredPath(path: string): boolean {
@@ -117,6 +135,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
+  async function createFileInRoot(name: string): Promise<string> {
+    if (!rootPath.value) throw new Error("请先打开文件夹");
+    const fileName = normalizeFileName(name);
+    const path = joinPath(rootPath.value, fileName);
+    await invoke("create_text_file", { path });
+    await refreshDir(rootPath.value);
+    return path;
+  }
+
+  async function createFolderInRoot(name: string): Promise<string> {
+    if (!rootPath.value) throw new Error("请先打开文件夹");
+    const folderName = validateName(name);
+    const path = joinPath(rootPath.value, folderName);
+    await invoke("create_dir", { path });
+    await refreshDir(rootPath.value);
+    return path;
+  }
+
   async function openFolder() {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
@@ -134,5 +170,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.removeItem(WORKSPACE_ROOT_KEY);
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
+  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, createFileInRoot, createFolderInRoot, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
 });

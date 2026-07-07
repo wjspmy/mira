@@ -77,6 +77,22 @@ body { background: var(--bg); color: var(--fg); }
   top: 0;
   background: var(--bg);
 }
+.workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.workspace-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.workspace-header button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.workspace-header button:hover { background: var(--code-bg); color: var(--fg); }
 .tree { padding: 4px 0; }
 .tree-row {
   display: flex;

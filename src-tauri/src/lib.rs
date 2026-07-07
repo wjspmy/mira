@@ -90,6 +90,32 @@ fn list_dir(path: String, ignore: Vec<String>) -> Result<Vec<FileNode>, String> 
     Ok(v)
 }
 
+/// 新建空文本文件。若目标已存在则失败，避免覆盖用户数据。
+#[tauri::command]
+fn create_text_file(path: String) -> Result<(), String> {
+    let target = Path::new(&path);
+    if target.exists() {
+        return Err("目标已存在".to_string());
+    }
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            return Err("父目录不存在".to_string());
+        }
+    }
+    fs::File::create(target).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 新建目录。若目标已存在则失败，避免误用已有目录。
+#[tauri::command]
+fn create_dir(path: String) -> Result<(), String> {
+    let target = Path::new(&path);
+    if target.exists() {
+        return Err("目标已存在".to_string());
+    }
+    fs::create_dir(target).map_err(|e| e.to_string())
+}
+
 /// 保存粘贴/拖入的图片到 <dir>/assets/<name>，返回相对路径 ./assets/<name>（设计 §18.2）。
 /// 同名自动加 -1/-2；非法字符替换为 _。
 #[tauri::command]
@@ -217,6 +243,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             list_dir,
+            create_text_file,
+            create_dir,
             write_asset,
             watch,
             unwatch

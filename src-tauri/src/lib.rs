@@ -90,6 +90,39 @@ fn list_dir(path: String, ignore: Vec<String>) -> Result<Vec<FileNode>, String> 
     Ok(v)
 }
 
+/// 保存粘贴/拖入的图片到 <dir>/assets/<name>，返回相对路径 ./assets/<name>（设计 §18.2）。
+/// 同名自动加 -1/-2；非法字符替换为 _。
+#[tauri::command]
+fn write_asset(dir: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let assets_dir = Path::new(&dir).join("assets");
+    fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
+    let safe_name: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let mut target = assets_dir.join(&safe_name);
+    if target.exists() {
+        let path = Path::new(&safe_name);
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        let ext = path.extension().and_then(|s| s.to_str());
+        let mut i = 1;
+        loop {
+            let new_name = match ext {
+                Some(e) => format!("{}-{}.{}", stem, i, e),
+                None => format!("{}-{}", stem, i),
+            };
+            target = assets_dir.join(&new_name);
+            if !target.exists() {
+                break;
+            }
+            i += 1;
+        }
+    }
+    fs::write(&target, &bytes).map_err(|e| e.to_string())?;
+    let final_name = target.file_name().and_then(|s| s.to_str()).unwrap_or(&safe_name);
+    Ok(format!("./assets/{}", final_name))
+}
+
 /// 监听工作区（递归），外部改动时 emit "fs:changed" {path, kind}（设计 §16.5 / §9.4）。
 /// 过滤自身 500ms 内的写入。重复监听同一根是 no-op。
 #[tauri::command]
@@ -175,6 +208,7 @@ pub fn run() {
             read_text_file,
             write_text_file,
             list_dir,
+            write_asset,
             watch,
             unwatch
         ])

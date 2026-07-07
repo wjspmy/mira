@@ -14,6 +14,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import { MathInline, MathBlock } from "./editor/math";
 import { serializeDocToMarkdown } from "./editor/serialize";
+import { MiraImage } from "./editor/image";
 import { useWorkspaceStore } from "./stores/workspace";
 import { useSessionStore } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
@@ -61,6 +62,7 @@ const editor = useEditor({
     Link.configure({ openOnClick: false }),
     MathInline,
     MathBlock,
+    MiraImage,
     Markdown.configure({ html: false, breaks: true }),
   ],
   content: "",
@@ -92,6 +94,16 @@ function normPath(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
+function dirname(p: string): string {
+  const sep = p.includes("\\") ? "\\" : "/";
+  return p.lastIndexOf(sep) >= 0 ? p.slice(0, p.lastIndexOf(sep)) : "";
+}
+
+function syncEditorDocDir(path: string | null | undefined) {
+  if (!editor.value) return;
+  editor.value.storage.miraDocDir = path ? dirname(path) || undefined : undefined;
+}
+
 const activeDoc = computed(() => session.activeDoc);
 const filePath = computed(() => session.activeDoc?.filePath ?? null);
 const dirty = computed(() => session.activeDoc?.dirty ?? false);
@@ -116,6 +128,8 @@ async function switchTo(newId: string | null) {
   loading = true;
   if (newId && editor.value) {
     const next = session.docs.find((d) => d.id === newId);
+    // 设置当前文档目录（供 MiraImage 解析相对图片路径）
+    syncEditorDocDir(next?.filePath);
     if (next) editor.value.commands.setContent(next.rawMd || "");
   } else if (editor.value) {
     editor.value.commands.setContent("");
@@ -176,6 +190,11 @@ async function saveFile() {
     });
     if (!path) return;
     doc.filePath = path;
+    syncEditorDocDir(path);
+    const dir = dirname(path);
+    if (dir) {
+      try { await invoke("watch", { root: dir }); } catch { /* ignore */ }
+    }
   }
   try {
     await invoke("write_text_file", { path, content: md });
@@ -285,7 +304,19 @@ async function handleFsChanged(path: string) {
   }
 }
 
+function onImageInserted(e: Event) {
+  const rel = (e as CustomEvent<{ src?: string }>).detail?.src;
+  status.value = rel ? `图片已插入 ${rel}` : "图片已插入";
+}
+
+function onImageError(e: Event) {
+  const message = (e as CustomEvent<{ message?: string }>).detail?.message;
+  status.value = message || "图片插入失败";
+}
+
 onMounted(async () => {
+  window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
+  window.addEventListener("mira:image-error", onImageError as EventListener);
   // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
   unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
     const { path } = e.payload;
@@ -299,6 +330,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);
+  window.removeEventListener("mira:image-error", onImageError as EventListener);
   if (timer) clearTimeout(timer);
   if (unlistenFs) unlistenFs();
   editor.value?.destroy();

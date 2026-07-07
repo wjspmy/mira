@@ -34,6 +34,7 @@ import TableCell from "@tiptap/extension-table-cell";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
+import Image from "@tiptap/extension-image";
 import { MathInline, MathBlock, mathPlugin } from "./math";
 
 const lowlight = createLowlight(common);
@@ -52,6 +53,7 @@ function ensureEditor(): Editor {
         Table, TableRow, TableHeader, TableCell,
         TaskList, TaskItem.configure({ nested: true }),
         Link.configure({ openOnClick: false }),
+        Image,
         MathInline, MathBlock,
         TiptapMarkdown.configure({ html: false, breaks: true }),
       ],
@@ -77,7 +79,7 @@ const remark = unified()
     fences: true,
     listItemIndent: "one",
     rule: "-",
-    resourceLink: "preferred",
+    resourceLink: true,
   });
 
 // ---------- 自研遍历器 ----------
@@ -239,6 +241,10 @@ class Serializer {
         this.push("$$");
         this.push(node.attrs.latex || "");
         this.push("$$");
+        this.blank();
+        break;
+      case "image":
+        this.push(imageMd(node));
         this.blank();
         break;
       case "table":

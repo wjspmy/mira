@@ -15,7 +15,7 @@ import Link from "@tiptap/extension-link";
 import { MathInline, MathBlock } from "./editor/math";
 import { serializeDocToMarkdown } from "./editor/serialize";
 import { MiraImage } from "./editor/image";
-import { useWorkspaceStore } from "./stores/workspace";
+import { useWorkspaceStore, type FileNode } from "./stores/workspace";
 import { useSessionStore } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
 import FileTreeNode from "./components/FileTree.vue";
@@ -249,6 +249,37 @@ async function createWorkspaceFolder() {
   }
 }
 
+async function renameWorkspaceNode(node: FileNode) {
+  if (node.isDir) {
+    const message = "本阶段仅支持重命名文件";
+    status.value = message;
+    window.alert(message);
+    return;
+  }
+  const newName = window.prompt("新文件名", node.name);
+  if (newName === null || newName.trim() === node.name) return;
+  const oldPath = node.path;
+  try {
+    const newPath = await ws.renameNode(node, newName);
+    const doc = session.findDocByPath(oldPath);
+    if (doc) {
+      const existing = session.findDocByPath(newPath);
+      if (existing && existing.id !== doc.id) {
+        throw new Error("目标文件已在其他标签中打开");
+      }
+      doc.filePath = newPath;
+      if (session.activeId === doc.id) syncEditorDocDir(newPath);
+      persistSessionSoon();
+    }
+    recent.renameRecent(oldPath, newPath);
+    status.value = `已重命名为 ${basename(newPath)}`;
+  } catch (e) {
+    const message = `重命名失败：${e instanceof Error ? e.message : String(e)}`;
+    status.value = message;
+    window.alert(message);
+  }
+}
+
 async function closeDoc(id: string) {
   const doc = session.docs.find((d) => d.id === id);
   if (doc?.dirty && !(await ask("该文档有未保存修改，确认关闭？", { title: "Mira", kind: "warning" }))) {
@@ -461,6 +492,7 @@ onBeforeUnmount(() => {
               :node="child"
               :depth="0"
               @open-file="openFile"
+              @rename-node="renameWorkspaceNode"
             />
             <div v-if="ws.childrenOf(ws.rootPath) === null" class="tree-loading">加载中…</div>
           </div>

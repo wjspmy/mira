@@ -5,6 +5,10 @@ import { ref } from "vue";
 const RECENT_KEY = "mira-recent";
 const MAX = 20;
 
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
 export const useRecentStore = defineStore("recent", () => {
   const recentPaths = ref<string[]>(load());
 
@@ -22,14 +26,36 @@ export const useRecentStore = defineStore("recent", () => {
   }
 
   function addRecent(path: string) {
-    recentPaths.value = [path, ...recentPaths.value.filter((p) => p !== path)].slice(0, MAX);
+    const np = normPath(path);
+    recentPaths.value = [path, ...recentPaths.value.filter((p) => normPath(p) !== np)].slice(0, MAX);
     persist();
   }
 
   function removeRecent(path: string) {
-    recentPaths.value = recentPaths.value.filter((p) => p !== path);
+    const np = normPath(path);
+    recentPaths.value = recentPaths.value.filter((p) => normPath(p) !== np);
     persist();
   }
 
-  return { recentPaths, addRecent, removeRecent };
+  function renameRecent(oldPath: string, newPath: string) {
+    const oldNorm = normPath(oldPath);
+    const newNorm = normPath(newPath);
+    let replaced = false;
+    const next: string[] = [];
+    for (const p of recentPaths.value) {
+      const np = normPath(p);
+      if (np === oldNorm) {
+        if (!next.some((x) => normPath(x) === newNorm)) next.push(newPath);
+        replaced = true;
+      } else if (np !== newNorm) {
+        next.push(p);
+      }
+    }
+    if (replaced) {
+      recentPaths.value = next.slice(0, MAX);
+      persist();
+    }
+  }
+
+  return { recentPaths, addRecent, removeRecent, renameRecent };
 });

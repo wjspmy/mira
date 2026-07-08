@@ -106,7 +106,19 @@ body { background: var(--bg); color: var(--fg); }
 .tree-row:hover { background: var(--code-bg); }
 .tree-row.dir .name { font-weight: 500; }
 .tree-row .chevron { width: 12px; color: var(--muted); text-align: center; flex-shrink: 0; }
-.tree-row .name { overflow: hidden; text-overflow: ellipsis; }
+.tree-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tree-action {
+  opacity: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.tree-row:hover .tree-action { opacity: 1; }
+.tree-action:hover { background: var(--code-bg); color: var(--fg); }
 
 .toolbar {
   display: flex;

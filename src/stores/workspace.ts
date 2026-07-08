@@ -153,6 +153,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return path;
   }
 
+  async function renameNode(node: FileNode, newName: string): Promise<string> {
+    if (node.isDir) throw new Error("本阶段仅支持重命名文件");
+    const name = validateName(newName);
+    const dir = parentDir(node.path);
+    const newPath = joinPath(dir, name);
+    if (normPath(node.path) === normPath(newPath)) return node.path;
+    await invoke("rename_path", { oldPath: node.path, newPath });
+    await refreshDir(dir);
+    return newPath;
+  }
+
   async function openFolder() {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
@@ -170,5 +181,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.removeItem(WORKSPACE_ROOT_KEY);
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, createFileInRoot, createFolderInRoot, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
+  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, createFileInRoot, createFolderInRoot, renameNode, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
 });

@@ -2,7 +2,10 @@
 import { useWorkspaceStore, type FileNode } from "../stores/workspace";
 
 const props = defineProps<{ node: FileNode; depth: number }>();
-const emit = defineEmits<{ (e: "open-file", path: string): void }>();
+const emit = defineEmits<{
+  (e: "open-file", path: string): void;
+  (e: "rename-node", node: FileNode): void;
+}>();
 const ws = useWorkspaceStore();
 
 async function onClick() {
@@ -26,6 +29,7 @@ const kids = () => (props.node.isDir ? ws.childrenOf(props.node.path) : null);
     >
       <span class="chevron">{{ node.isDir ? (ws.isExpanded(node.path) ? "▾" : "▸") : "·" }}</span>
       <span class="name">{{ node.name }}</span>
+      <button v-if="!node.isDir" class="tree-action" title="重命名" @click.stop="emit('rename-node', node)">重命名</button>
     </div>
     <div v-if="node.isDir && ws.isExpanded(node.path) && kids()" class="tree-children">
       <FileTreeNode
@@ -34,6 +38,7 @@ const kids = () => (props.node.isDir ? ws.childrenOf(props.node.path) : null);
         :node="child"
         :depth="depth + 1"
         @open-file="(p) => emit('open-file', p)"
+        @rename-node="(n) => emit('rename-node', n)"
       />
     </div>
   </div>

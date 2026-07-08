@@ -116,6 +116,31 @@ fn create_dir(path: String) -> Result<(), String> {
     fs::create_dir(target).map_err(|e| e.to_string())
 }
 
+/// 重命名同一目录下的文件/目录。若目标已存在则失败，避免覆盖用户数据。
+#[tauri::command]
+fn rename_path(old_path: String, new_path: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
+    let old = Path::new(&old_path);
+    let new = Path::new(&new_path);
+    if !old.exists() {
+        return Err("源文件不存在".to_string());
+    }
+    if old.parent() != new.parent() {
+        return Err("暂不支持移动到其他目录".to_string());
+    }
+    if old_path == new_path {
+        return Ok(());
+    }
+    if old_path.to_lowercase() != new_path.to_lowercase() && new.exists() {
+        return Err("目标已存在".to_string());
+    }
+    if let Ok(mut rw) = state.recent_writes.lock() {
+        let now = std::time::Instant::now();
+        rw.insert(old_path.clone(), now);
+        rw.insert(new_path.clone(), now);
+    }
+    fs::rename(old, new).map_err(|e| e.to_string())
+}
+
 /// 保存粘贴/拖入的图片到 <dir>/assets/<name>，返回相对路径 ./assets/<name>（设计 §18.2）。
 /// 同名自动加 -1/-2；非法字符替换为 _。
 #[tauri::command]
@@ -245,6 +270,7 @@ pub fn run() {
             list_dir,
             create_text_file,
             create_dir,
+            rename_path,
             write_asset,
             watch,
             unwatch

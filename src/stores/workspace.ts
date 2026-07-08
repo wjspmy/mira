@@ -28,6 +28,14 @@ function joinPath(dir: string, name: string): string {
   return dir.replace(/[\\/]+$/, "") + sep + name;
 }
 
+function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
+  const np = normPath(path);
+  const oldNorm = normPath(oldPrefix);
+  if (np === oldNorm) return newPrefix;
+  if (!np.startsWith(oldNorm + "/")) return path;
+  return newPrefix.replace(/[\\/]+$/, "") + path.slice(oldPrefix.length);
+}
+
 function normalizeFileName(name: string): string {
   const n = validateName(name);
   return n.includes(".") ? n : `${n}.md`;
@@ -59,15 +67,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     await refreshDir(path);
   }
 
-  async function refreshDir(path: string) {
-    // 先标记为 null（加载中），避免重复请求
-    childrenMap.value = { ...childrenMap.value, [path]: null };
+  async function refreshDir(path: string, showLoading = true) {
+    // 首次加载时显示 loading；已有内容的目录静默刷新，避免新建后闪一下。
+    if (showLoading) childrenMap.value = { ...childrenMap.value, [path]: null };
     try {
       const list = await invoke<FileNode[]>("list_dir", { path, ignore: IGNORE });
       childrenMap.value = { ...childrenMap.value, [path]: list };
     } catch (e) {
       console.error("list_dir failed", e);
-      childrenMap.value = { ...childrenMap.value, [path]: [] };
+      childrenMap.value = { ...childrenMap.value, [path]: childrenMap.value[path] ?? [] };
     }
   }
 
@@ -121,6 +129,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return target === root || target.startsWith(root + "/");
   }
 
+  function ensureCreatableDir(dir: string) {
+    if (!rootPath.value) throw new Error("请先打开文件夹");
+    if (!isUnderRoot(dir)) throw new Error("目标目录不在当前工作区内");
+  }
+
+  async function revealDir(dir: string) {
+    await refreshDir(dir, false);
+    expanded.value = new Set([...expanded.value, dir]);
+  }
+
   async function refreshForPath(path: string) {
     if (!rootPath.value || !isUnderRoot(path) || isIgnoredPath(path)) return;
     const dirs = new Set<string>();
@@ -131,37 +149,76 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (parent && parent in childrenMap.value) dirs.add(parent);
     if (path in childrenMap.value) dirs.add(path);
     for (const dir of dirs) {
-      await refreshDir(dir);
+      await refreshDir(dir, false);
     }
+  }
+
+  async function createFile(dir: string, name: string): Promise<string> {
+    ensureCreatableDir(dir);
+    const fileName = normalizeFileName(name);
+    const path = joinPath(dir, fileName);
+    await invoke("create_text_file", { path });
+    await revealDir(dir);
+    return path;
+  }
+
+  async function createFolder(dir: string, name: string): Promise<string> {
+    ensureCreatableDir(dir);
+    const folderName = validateName(name);
+    const path = joinPath(dir, folderName);
+    await invoke("create_dir", { path });
+    await revealDir(dir);
+    return path;
   }
 
   async function createFileInRoot(name: string): Promise<string> {
     if (!rootPath.value) throw new Error("请先打开文件夹");
-    const fileName = normalizeFileName(name);
-    const path = joinPath(rootPath.value, fileName);
-    await invoke("create_text_file", { path });
-    await refreshDir(rootPath.value);
-    return path;
+    return createFile(rootPath.value, name);
   }
 
   async function createFolderInRoot(name: string): Promise<string> {
     if (!rootPath.value) throw new Error("请先打开文件夹");
-    const folderName = validateName(name);
-    const path = joinPath(rootPath.value, folderName);
-    await invoke("create_dir", { path });
-    await refreshDir(rootPath.value);
-    return path;
+    return createFolder(rootPath.value, name);
   }
 
   async function renameNode(node: FileNode, newName: string): Promise<string> {
-    if (node.isDir) throw new Error("本阶段仅支持重命名文件");
     const name = validateName(newName);
     const dir = parentDir(node.path);
     const newPath = joinPath(dir, name);
     if (normPath(node.path) === normPath(newPath)) return node.path;
     await invoke("rename_path", { oldPath: node.path, newPath });
-    await refreshDir(dir);
+
+    if (node.isDir) {
+      const nextChildren: Record<string, FileNode[] | null> = {};
+      for (const [key, value] of Object.entries(childrenMap.value)) {
+        const nextKey = replacePathPrefix(key, node.path, newPath);
+        nextChildren[nextKey] = value;
+      }
+      childrenMap.value = nextChildren;
+      const nextExpanded = new Set<string>();
+      for (const key of expanded.value) {
+        nextExpanded.add(replacePathPrefix(key, node.path, newPath));
+      }
+      expanded.value = nextExpanded;
+    }
+
+    if (dir) await refreshDir(dir, false);
     return newPath;
+  }
+
+  async function deleteNode(node: FileNode): Promise<void> {
+    const dir = parentDir(node.path);
+    await invoke("delete_path", { path: node.path });
+    const deleted = normPath(node.path);
+    const nextChildren = { ...childrenMap.value };
+    for (const key of Object.keys(nextChildren)) {
+      const nk = normPath(key);
+      if (nk === deleted || nk.startsWith(deleted + "/")) {
+        delete nextChildren[key];
+      }
+    }
+    childrenMap.value = nextChildren;
+    if (dir) await refreshDir(dir, false);
   }
 
   async function openFolder() {
@@ -181,5 +238,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.removeItem(WORKSPACE_ROOT_KEY);
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, createFileInRoot, createFolderInRoot, renameNode, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
+  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, createFile, createFolder, createFileInRoot, createFolderInRoot, renameNode, deleteNode, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
 });

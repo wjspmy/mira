@@ -9,6 +9,14 @@ function normPath(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
+function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
+  const np = normPath(path);
+  const oldNorm = normPath(oldPrefix);
+  if (np === oldNorm) return newPrefix;
+  if (!np.startsWith(oldNorm + "/")) return path;
+  return newPrefix.replace(/[\\/]+$/, "") + path.slice(oldPrefix.length);
+}
+
 export const useRecentStore = defineStore("recent", () => {
   const recentPaths = ref<string[]>(load());
 
@@ -38,18 +46,13 @@ export const useRecentStore = defineStore("recent", () => {
   }
 
   function renameRecent(oldPath: string, newPath: string) {
-    const oldNorm = normPath(oldPath);
-    const newNorm = normPath(newPath);
     let replaced = false;
     const next: string[] = [];
     for (const p of recentPaths.value) {
-      const np = normPath(p);
-      if (np === oldNorm) {
-        if (!next.some((x) => normPath(x) === newNorm)) next.push(newPath);
-        replaced = true;
-      } else if (np !== newNorm) {
-        next.push(p);
-      }
+      const nextPath = replacePathPrefix(p, oldPath, newPath);
+      const nextNorm = normPath(nextPath);
+      if (nextNorm !== normPath(p)) replaced = true;
+      if (!next.some((x) => normPath(x) === nextNorm)) next.push(nextPath);
     }
     if (replaced) {
       recentPaths.value = next.slice(0, MAX);
@@ -57,5 +60,14 @@ export const useRecentStore = defineStore("recent", () => {
     }
   }
 
-  return { recentPaths, addRecent, removeRecent, renameRecent };
+  function removeRecentUnder(path: string) {
+    const root = normPath(path);
+    recentPaths.value = recentPaths.value.filter((p) => {
+      const np = normPath(p);
+      return np !== root && !np.startsWith(root + "/");
+    });
+    persist();
+  }
+
+  return { recentPaths, addRecent, removeRecent, renameRecent, removeRecentUnder };
 });

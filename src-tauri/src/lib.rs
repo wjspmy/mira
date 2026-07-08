@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
 use std::collections::HashMap;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -141,6 +140,19 @@ fn rename_path(old_path: String, new_path: String, state: tauri::State<'_, Watch
     fs::rename(old, new).map_err(|e| e.to_string())
 }
 
+/// 将文件或目录移入系统回收站/废纸篓。调用方必须先确认，避免误操作。
+#[tauri::command]
+fn delete_path(path: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
+    let target = Path::new(&path);
+    if !target.exists() {
+        return Err("目标不存在".to_string());
+    }
+    if let Ok(mut rw) = state.recent_writes.lock() {
+        rw.insert(path.clone(), std::time::Instant::now());
+    }
+    trash::delete(target).map_err(|e| e.to_string())
+}
+
 /// 保存粘贴/拖入的图片到 <dir>/assets/<name>，返回相对路径 ./assets/<name>（设计 §18.2）。
 /// 同名自动加 -1/-2；非法字符替换为 _。
 #[tauri::command]
@@ -271,6 +283,7 @@ pub fn run() {
             create_text_file,
             create_dir,
             rename_path,
+            delete_path,
             write_asset,
             watch,
             unwatch

@@ -30,6 +30,13 @@ const recent = useRecentStore();
 const status = ref("就绪");
 let restoringSession = false;
 
+type ContextMenuState = {
+  x: number;
+  y: number;
+  node: FileNode | null;
+};
+const contextMenu = ref<ContextMenuState | null>(null);
+
 // 主题：浅/深，持久化到 localStorage，默认跟随系统
 const theme = ref<"light" | "dark">(
   (localStorage.getItem("mira-theme") as "light" | "dark") ||
@@ -93,6 +100,20 @@ function basename(p: string) {
 
 function normPath(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
+function isSameOrChildPath(path: string, root: string): boolean {
+  const p = normPath(path);
+  const r = normPath(root);
+  return p === r || p.startsWith(r + "/");
+}
+
+function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
+  const p = normPath(path);
+  const old = normPath(oldPrefix);
+  if (p === old) return newPrefix;
+  if (!p.startsWith(old + "/")) return path;
+  return newPrefix.replace(/[\\/]+$/, "") + path.slice(oldPrefix.length);
 }
 
 function dirname(p: string): string {
@@ -214,15 +235,15 @@ async function saveFile() {
   }
 }
 
-async function createWorkspaceFile() {
-  if (!ws.rootPath) {
+async function createWorkspaceFile(dir = ws.rootPath) {
+  if (!dir) {
     status.value = "请先打开文件夹";
     return;
   }
   const name = window.prompt("文件名", "untitled.md");
   if (name === null) return;
   try {
-    const path = await ws.createFileInRoot(name);
+    const path = await ws.createFile(dir, name);
     await openFile(path);
     status.value = `已新建文件 ${path}`;
   } catch (e) {
@@ -232,15 +253,15 @@ async function createWorkspaceFile() {
   }
 }
 
-async function createWorkspaceFolder() {
-  if (!ws.rootPath) {
+async function createWorkspaceFolder(dir = ws.rootPath) {
+  if (!dir) {
     status.value = "请先打开文件夹";
     return;
   }
   const name = window.prompt("文件夹名", "新建文件夹");
   if (name === null) return;
   try {
-    const path = await ws.createFolderInRoot(name);
+    const path = await ws.createFolder(dir, name);
     status.value = `已新建文件夹 ${path}`;
   } catch (e) {
     const message = `新建文件夹失败：${e instanceof Error ? e.message : String(e)}`;
@@ -250,27 +271,17 @@ async function createWorkspaceFolder() {
 }
 
 async function renameWorkspaceNode(node: FileNode) {
-  if (node.isDir) {
-    const message = "本阶段仅支持重命名文件";
-    status.value = message;
-    window.alert(message);
-    return;
-  }
-  const newName = window.prompt("新文件名", node.name);
+  const newName = window.prompt(node.isDir ? "新文件夹名" : "新文件名", node.name);
   if (newName === null || newName.trim() === node.name) return;
   const oldPath = node.path;
   try {
     const newPath = await ws.renameNode(node, newName);
-    const doc = session.findDocByPath(oldPath);
-    if (doc) {
-      const existing = session.findDocByPath(newPath);
-      if (existing && existing.id !== doc.id) {
-        throw new Error("目标文件已在其他标签中打开");
-      }
-      doc.filePath = newPath;
-      if (session.activeId === doc.id) syncEditorDocDir(newPath);
-      persistSessionSoon();
+    const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, oldPath));
+    for (const doc of affectedDocs) {
+      doc.filePath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+      if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
     }
+    if (affectedDocs.length) persistSessionSoon();
     recent.renameRecent(oldPath, newPath);
     status.value = `已重命名为 ${basename(newPath)}`;
   } catch (e) {
@@ -278,6 +289,101 @@ async function renameWorkspaceNode(node: FileNode) {
     status.value = message;
     window.alert(message);
   }
+}
+
+async function deleteWorkspaceNode(node: FileNode) {
+  const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, node.path));
+  const dirtyCount = affectedDocs.filter((d) => d.dirty).length;
+  const message = node.isDir
+    ? `确认将文件夹 "${node.name}" 及其中所有内容移到回收站？${dirtyCount ? `\n包含 ${dirtyCount} 个未保存的已打开文档。` : ""}`
+    : `确认将文件 "${node.name}" 移到回收站？${dirtyCount ? "\n该文件有未保存修改。" : ""}`;
+  const ok = await ask(message, { title: "Mira", kind: "warning" });
+  if (!ok) return;
+
+  try {
+    const affectedIds = new Set(affectedDocs.map((d) => d.id));
+    const activeWillClose = session.activeId ? affectedIds.has(session.activeId) : false;
+    const nextDoc = activeWillClose ? session.docs.find((d) => !affectedIds.has(d.id)) ?? null : null;
+    await ws.deleteNode(node);
+    for (const doc of affectedDocs) {
+      session.removeDoc(doc.id);
+    }
+    recent.removeRecentUnder(node.path);
+    if (activeWillClose) {
+      await switchTo(nextDoc?.id ?? null);
+    } else {
+      persistSessionSoon();
+    }
+    status.value = `已移到回收站 ${node.name}`;
+  } catch (e) {
+    const error = `移到回收站失败：${e instanceof Error ? e.message : String(e)}`;
+    status.value = error;
+    window.alert(error);
+  }
+}
+
+function contextMenuPosition(event: MouseEvent) {
+  const menuWidth = 170;
+  const menuHeight = 240;
+  const gap = 8;
+  return {
+    x: Math.max(gap, Math.min(event.clientX, window.innerWidth - menuWidth - gap)),
+    y: Math.max(gap, Math.min(event.clientY, window.innerHeight - menuHeight - gap)),
+  };
+}
+
+function openNodeContextMenu(node: FileNode, event: MouseEvent) {
+  contextMenu.value = { ...contextMenuPosition(event), node };
+}
+
+function openRootContextMenu(event: MouseEvent) {
+  contextMenu.value = { ...contextMenuPosition(event), node: null };
+}
+
+function closeContextMenu() {
+  contextMenu.value = null;
+}
+
+function contextTargetDir(): string | null {
+  const node = contextMenu.value?.node;
+  if (!node) return ws.rootPath;
+  return node.isDir ? node.path : dirname(node.path);
+}
+
+async function contextOpenFile() {
+  const node = contextMenu.value?.node;
+  closeContextMenu();
+  if (node && !node.isDir) await openFile(node.path);
+}
+
+async function contextNewFile() {
+  const dir = contextTargetDir();
+  closeContextMenu();
+  await createWorkspaceFile(dir);
+}
+
+async function contextNewFolder() {
+  const dir = contextTargetDir();
+  closeContextMenu();
+  await createWorkspaceFolder(dir);
+}
+
+async function contextRename() {
+  const node = contextMenu.value?.node;
+  closeContextMenu();
+  if (node) await renameWorkspaceNode(node);
+}
+
+async function contextMoveToTrash() {
+  const node = contextMenu.value?.node;
+  closeContextMenu();
+  if (node) await deleteWorkspaceNode(node);
+}
+
+async function contextRefresh() {
+  const dir = contextTargetDir();
+  closeContextMenu();
+  if (dir) await ws.refreshDir(dir);
 }
 
 async function closeDoc(id: string) {
@@ -426,6 +532,7 @@ async function restoreLastSession() {
 onMounted(async () => {
   window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.addEventListener("mira:image-error", onImageError as EventListener);
+  window.addEventListener("click", closeContextMenu);
   // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
   unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
     const { path, kind } = e.payload;
@@ -446,6 +553,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.removeEventListener("mira:image-error", onImageError as EventListener);
+  window.removeEventListener("click", closeContextMenu);
   if (timer) clearTimeout(timer);
   if (unlistenFs) unlistenFs();
   editor.value?.destroy();
@@ -480,19 +588,22 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <section v-if="ws.rootPath">
-          <div class="sidebar-header workspace-header" :title="ws.rootPath">
+          <div
+            class="sidebar-header workspace-header"
+            :title="ws.rootPath"
+            @contextmenu.prevent="openRootContextMenu($event)"
+          >
             <span class="workspace-name">{{ ws.rootName }}</span>
-            <button @click.stop="createWorkspaceFile" title="新建文件">+文件</button>
-            <button @click.stop="createWorkspaceFolder" title="新建文件夹">+夹</button>
+            <span class="workspace-hint">右键操作</span>
           </div>
-          <div class="tree">
+          <div class="tree" @contextmenu.self.prevent="openRootContextMenu($event)">
             <FileTreeNode
               v-for="child in ws.childrenOf(ws.rootPath) || []"
               :key="child.path"
               :node="child"
               :depth="0"
               @open-file="openFile"
-              @rename-node="renameWorkspaceNode"
+              @context-menu="openNodeContextMenu"
             />
             <div v-if="ws.childrenOf(ws.rootPath) === null" class="tree-loading">加载中…</div>
           </div>
@@ -502,6 +613,22 @@ onBeforeUnmount(() => {
         </div>
       </aside>
       <EditorContent v-if="editor" :editor="editor" class="mira-editor editor" />
+    </div>
+    <div
+      v-if="contextMenu"
+      class="context-menu"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      @click.stop
+      @contextmenu.prevent
+    >
+      <button v-if="contextMenu.node && !contextMenu.node.isDir" @click="contextOpenFile">打开</button>
+      <button v-if="!contextMenu.node || contextMenu.node.isDir" @click="contextNewFile">新建文件</button>
+      <button v-if="!contextMenu.node || contextMenu.node.isDir" @click="contextNewFolder">新建文件夹</button>
+      <div v-if="contextMenu.node" class="context-separator"></div>
+      <button v-if="contextMenu.node" @click="contextRename">重命名</button>
+      <button v-if="contextMenu.node" class="danger" @click="contextMoveToTrash">移到回收站</button>
+      <div class="context-separator"></div>
+      <button @click="contextRefresh">刷新</button>
     </div>
     <footer class="status">{{ status }}</footer>
   </div>

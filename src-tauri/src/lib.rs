@@ -115,7 +115,7 @@ fn create_dir(path: String) -> Result<(), String> {
     fs::create_dir(target).map_err(|e| e.to_string())
 }
 
-/// 重命名同一目录下的文件/目录。若目标已存在则失败，避免覆盖用户数据。
+/// 重命名或移动文件/目录。若目标已存在则失败，避免覆盖用户数据。
 #[tauri::command]
 fn rename_path(old_path: String, new_path: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
     let old = Path::new(&old_path);
@@ -123,11 +123,19 @@ fn rename_path(old_path: String, new_path: String, state: tauri::State<'_, Watch
     if !old.exists() {
         return Err("源文件不存在".to_string());
     }
-    if old.parent() != new.parent() {
-        return Err("暂不支持移动到其他目录".to_string());
+    let new_parent = new.parent().ok_or_else(|| "目标父目录无效".to_string())?;
+    if !new_parent.exists() {
+        return Err("目标父目录不存在".to_string());
     }
     if old_path == new_path {
         return Ok(());
+    }
+    if old.is_dir() {
+        let old_canon = old.canonicalize().map_err(|e| e.to_string())?;
+        let parent_canon = new_parent.canonicalize().map_err(|e| e.to_string())?;
+        if parent_canon == old_canon || parent_canon.starts_with(&old_canon) {
+            return Err("不能将文件夹移动到自身内部".to_string());
+        }
     }
     if old_path.to_lowercase() != new_path.to_lowercase() && new.exists() {
         return Err("目标已存在".to_string());

@@ -291,6 +291,29 @@ async function renameWorkspaceNode(node: FileNode) {
   }
 }
 
+async function moveWorkspaceNode(node: FileNode) {
+  const selected = await openDialog({ directory: true, multiple: false, defaultPath: ws.rootPath ?? undefined });
+  if (!selected) return;
+  const targetDir = typeof selected === "string" ? selected : (selected as any).path;
+  if (!targetDir) return;
+  const oldPath = node.path;
+  try {
+    const newPath = await ws.moveNodeToDir(node, targetDir);
+    const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, oldPath));
+    for (const doc of affectedDocs) {
+      doc.filePath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+      if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
+    }
+    if (affectedDocs.length) persistSessionSoon();
+    recent.renameRecent(oldPath, newPath);
+    status.value = `已移动到 ${targetDir}`;
+  } catch (e) {
+    const message = `移动失败：${e instanceof Error ? e.message : String(e)}`;
+    status.value = message;
+    window.alert(message);
+  }
+}
+
 async function deleteWorkspaceNode(node: FileNode) {
   const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, node.path));
   const dirtyCount = affectedDocs.filter((d) => d.dirty).length;
@@ -372,6 +395,12 @@ async function contextRename() {
   const node = contextMenu.value?.node;
   closeContextMenu();
   if (node) await renameWorkspaceNode(node);
+}
+
+async function contextMove() {
+  const node = contextMenu.value?.node;
+  closeContextMenu();
+  if (node) await moveWorkspaceNode(node);
 }
 
 async function contextMoveToTrash() {
@@ -626,6 +655,7 @@ onBeforeUnmount(() => {
       <button v-if="!contextMenu.node || contextMenu.node.isDir" @click="contextNewFolder">新建文件夹</button>
       <div v-if="contextMenu.node" class="context-separator"></div>
       <button v-if="contextMenu.node" @click="contextRename">重命名</button>
+      <button v-if="contextMenu.node" @click="contextMove">移动到...</button>
       <button v-if="contextMenu.node" class="danger" @click="contextMoveToTrash">移到回收站</button>
       <div class="context-separator"></div>
       <button @click="contextRefresh">刷新</button>

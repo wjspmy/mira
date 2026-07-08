@@ -139,15 +139,26 @@ function uuid() {
 }
 
 // 显式切换：先同步保存旧 doc 的 markdown，再 setActive，再 setContent 新 doc。
-// TODO: undo/redo 跨标签（setContent 不清历史）；EditorState.create 清历史会触发选区还原 bug，待解。
+// TODO: undo/redo 跨标签（setContent 不清历史）；尝试重建 EditorState 清历史未通过用户测试，待解。
 async function switchTo(newId: string | null) {
   const oldId = session.activeId;
   if (newId === oldId) return;
   if (timer) { clearTimeout(timer); timer = null; }
-  // 保存 outgoing：序列化为 markdown 字符串（不可变）
+  // 保存 outgoing：序列化为 markdown 字符串（不可变）；已命名 dirty 文档切走前立即落盘，避免防抖保存被取消。
   if (oldId && editor.value) {
     const old = session.docs.find((d) => d.id === oldId);
-    if (old) old.rawMd = getMarkdown();
+    if (old) {
+      old.rawMd = getMarkdown();
+      if (old.filePath && old.dirty) {
+        try {
+          await invoke("write_text_file", { path: old.filePath, content: old.rawMd });
+          old.dirty = false;
+          status.value = `已自动保存 ${old.filePath}`;
+        } catch (e) {
+          status.value = `自动保存失败：${e}`;
+        }
+      }
+    }
   }
   session.setActive(newId);
   // 恢复 incoming
@@ -156,9 +167,9 @@ async function switchTo(newId: string | null) {
     const next = session.docs.find((d) => d.id === newId);
     // 设置当前文档目录（供 MiraImage 解析相对图片路径）
     syncEditorDocDir(next?.filePath);
-    if (next) editor.value.commands.setContent(next.rawMd || "");
+    if (next) loadIntoEditor(next.rawMd || "");
   } else if (editor.value) {
-    editor.value.commands.setContent("");
+    loadIntoEditor("");
   }
   loading = false;
   persistSessionSoon();
@@ -440,14 +451,12 @@ function scheduleAutosave() {
   if (!doc || !doc.filePath) return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(async () => {
-    // 若已切换到别的文档，跳过（切换时旧 doc 内容已序列化进 rawMd）
-    if (doc !== session.activeDoc) return;
     try {
-      const md = getMarkdown();
+      const md = doc === session.activeDoc ? getMarkdown() : doc.rawMd;
       await invoke("write_text_file", { path: doc.filePath!, content: md });
       doc.rawMd = md;
       doc.dirty = false;
-      status.value = `已自动保存 ${doc.filePath}`;
+      if (doc === session.activeDoc) status.value = `已自动保存 ${doc.filePath}`;
     } catch (e) {
       status.value = `自动保存失败：${e}`;
     }

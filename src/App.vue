@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, onMounted, computed } from "vue";
+import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
@@ -56,6 +56,7 @@ applyTheme(theme.value);
 
 const lowlight = createLowlight(common);
 let loading = false; // 程序化 setContent 时抑制 onUpdate，避免误标 dirty
+let undoFloorMd = ""; // 当前标签加载时的内容基线，阻止 undo 穿透到上一个标签
 
 const editor = useEditor({
   extensions: [
@@ -74,6 +75,18 @@ const editor = useEditor({
     Markdown.configure({ html: false, breaks: true }),
   ],
   content: "",
+  editorProps: {
+    handleKeyDown: (_view, event) => {
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
+        // setContent 会留下跨文档 history。当前内容已回到本标签加载基线时，禁止继续 undo 穿透到上一个标签。
+        if (getMarkdown() === undoFloorMd) {
+          event.preventDefault();
+          return true;
+        }
+      }
+      return false;
+    },
+  },
   onUpdate: () => {
     if (loading) return;
     session.markActiveDirty(true);
@@ -90,6 +103,7 @@ function getMarkdown(): string {
 function loadIntoEditor(md: string) {
   loading = true;
   editor.value?.commands.setContent(md || "");
+  undoFloorMd = getMarkdown();
   loading = false;
 }
 
@@ -130,6 +144,25 @@ function persistSessionSoon() {
   if (!restoringSession) session.persistSession();
 }
 
+function editorScroller(): HTMLElement | null {
+  return document.querySelector(".editor");
+}
+
+function saveDocScroll(id: string | null) {
+  if (!id) return;
+  const doc = session.docs.find((d) => d.id === id);
+  const scroller = editorScroller();
+  if (doc && scroller) doc.scrollTop = scroller.scrollTop;
+}
+
+async function restoreDocScroll(id: string | null) {
+  await nextTick();
+  const scroller = editorScroller();
+  if (!scroller) return;
+  const doc = id ? session.docs.find((d) => d.id === id) : null;
+  scroller.scrollTop = doc?.scrollTop ?? 0;
+}
+
 const activeDoc = computed(() => session.activeDoc);
 const filePath = computed(() => session.activeDoc?.filePath ?? null);
 const dirty = computed(() => session.activeDoc?.dirty ?? false);
@@ -145,6 +178,7 @@ async function switchTo(newId: string | null) {
   if (newId === oldId) return;
   if (timer) { clearTimeout(timer); timer = null; }
   // 保存 outgoing：序列化为 markdown 字符串（不可变）；已命名 dirty 文档切走前立即落盘，避免防抖保存被取消。
+  saveDocScroll(oldId);
   if (oldId && editor.value) {
     const old = session.docs.find((d) => d.id === oldId);
     if (old) {
@@ -172,6 +206,7 @@ async function switchTo(newId: string | null) {
     loadIntoEditor("");
   }
   loading = false;
+  await restoreDocScroll(newId);
   persistSessionSoon();
 }
 
@@ -589,6 +624,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  saveDocScroll(session.activeId);
   window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.removeEventListener("mira:image-error", onImageError as EventListener);
   window.removeEventListener("click", closeContextMenu);

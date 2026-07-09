@@ -3,7 +3,7 @@
 > 所见，即所得。A minimalist desktop Markdown WYSIWYG editor.
 
 对标 [Typora](https://typora.io) 的桌面 Markdown 编辑器：本地优先、单用户、开源、轻量。
-完整设计与路线图见 [docs/design.md](docs/design.md)。
+完整设计与路线图见 [docs/design.md](docs/design.md)。已知未解决问题见 [docs/known-issues.md](docs/known-issues.md)。
 
 ## 功能
 

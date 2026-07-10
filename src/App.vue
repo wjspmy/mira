@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick } from "vue";
+import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick, markRaw } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
+import { EditorState, type EditorState as PMEditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
 import { createLowlight, common } from "lowlight";
@@ -55,8 +56,8 @@ watch(theme, (t) => {
 applyTheme(theme.value);
 
 const lowlight = createLowlight(common);
-let loading = false; // 程序化 setContent 时抑制 onUpdate，避免误标 dirty
-let undoFloorMd = ""; // 当前标签加载时的内容基线，阻止 undo 穿透到上一个标签
+let loading = false; // Suppress onUpdate during programmatic editor state changes.
+let undoFloorMd = ""; // Fallback guard: prevent undo from crossing the current tab baseline.
 
 const editor = useEditor({
   extensions: [
@@ -89,6 +90,8 @@ const editor = useEditor({
   },
   onUpdate: () => {
     if (loading) return;
+    const doc = session.activeDoc;
+    if (doc && editor.value) doc.editorState = markRaw(editor.value.state);
     session.markActiveDirty(true);
     scheduleAutosave();
   },
@@ -100,11 +103,50 @@ function getMarkdown(): string {
   return serializeDocToMarkdown(doc);
 }
 
-function loadIntoEditor(md: string) {
+function replaceEditorState(state: PMEditorState) {
+  const ed = editor.value;
+  if (!ed) return;
   loading = true;
-  editor.value?.commands.setContent(md || "");
-  undoFloorMd = getMarkdown();
-  loading = false;
+  try {
+    ed.view.updateState(state);
+    undoFloorMd = getMarkdown();
+  } finally {
+    loading = false;
+  }
+}
+
+function resetCurrentHistory() {
+  const ed = editor.value;
+  if (!ed) return;
+  const cleanState = EditorState.create({
+    schema: ed.schema,
+    doc: ed.state.doc,
+    plugins: ed.state.plugins,
+  });
+  ed.view.updateState(cleanState);
+}
+
+function loadIntoEditor(md: string) {
+  const ed = editor.value;
+  if (!ed) return;
+  loading = true;
+  try {
+    ed.commands.setContent(md || "");
+    resetCurrentHistory();
+    undoFloorMd = getMarkdown();
+    const doc = session.activeDoc;
+    if (doc) doc.editorState = markRaw(ed.state);
+  } finally {
+    loading = false;
+  }
+}
+
+function snapshotEditorState(id: string | null = session.activeId) {
+  if (!id || !editor.value) return;
+  const doc = session.docs.find((d) => d.id === id);
+  if (!doc) return;
+  doc.rawMd = getMarkdown();
+  doc.editorState = markRaw(editor.value.state);
 }
 
 function basename(p: string) {
@@ -182,7 +224,7 @@ async function switchTo(newId: string | null) {
   if (oldId && editor.value) {
     const old = session.docs.find((d) => d.id === oldId);
     if (old) {
-      old.rawMd = getMarkdown();
+      snapshotEditorState(oldId);
       if (old.filePath && old.dirty) {
         try {
           await invoke("write_text_file", { path: old.filePath, content: old.rawMd });
@@ -195,17 +237,20 @@ async function switchTo(newId: string | null) {
     }
   }
   session.setActive(newId);
-  // 恢复 incoming
-  loading = true;
+  // Restore the incoming tab state first, so each tab has isolated undo/redo history.
   if (newId && editor.value) {
     const next = session.docs.find((d) => d.id === newId);
-    // 设置当前文档目录（供 MiraImage 解析相对图片路径）
+    // Set current document directory for MiraImage relative path resolving.
     syncEditorDocDir(next?.filePath);
-    if (next) loadIntoEditor(next.rawMd || "");
+    if (next?.editorState) {
+      replaceEditorState(next.editorState as PMEditorState);
+    } else if (next) {
+      loadIntoEditor(next.rawMd || "");
+    }
   } else if (editor.value) {
+    syncEditorDocDir(null);
     loadIntoEditor("");
   }
-  loading = false;
   await restoreDocScroll(newId);
   persistSessionSoon();
 }
@@ -552,6 +597,7 @@ async function handleFsChanged(path: string) {
     if (!doc.dirty) {
       try {
         doc.rawMd = await invoke<string>("read_text_file", { path });
+        doc.editorState = null;
       } catch {
         /* ignore */
       }
@@ -624,6 +670,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  snapshotEditorState(session.activeId);
   saveDocScroll(session.activeId);
   window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.removeEventListener("mira:image-error", onImageError as EventListener);

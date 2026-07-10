@@ -1,6 +1,7 @@
 // 会话 store（设计 §15.1）：打开的文档列表 + 活动标签
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
+import type { EditorState } from "@tiptap/pm/state";
 
 export interface Doc {
   id: string;
@@ -8,8 +9,8 @@ export interface Doc {
   rawMd: string; // 最近一次序列化的 Markdown（保存/外部重载时更新）
   dirty: boolean; // 编辑器是否有未保存改动
   scrollTop?: number; // 编辑区滚动位置（仅内存态）
-  // ProseMirror 文档 JSON 快照（不可变）。切入时据此新建 EditorState（清空历史，独立 undo/redo）
-  docJSON?: any | null;
+  // Per-tab ProseMirror EditorState kept in memory to isolate undo/redo history.
+  editorState?: EditorState | null;
 }
 
 export interface SessionSnapshot {

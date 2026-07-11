@@ -1,10 +1,11 @@
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use notify::{Watcher, RecursiveMode, EventKind, RecommendedWatcher};
+use notify::event::{ModifyKind, RenameMode};
 
 /// 读取文本文件（UTF-8）。M0 基础实现；
 /// TODO(M2)：编码探测 / BOM / GBK 回退（设计 §16.3）。
@@ -204,6 +205,9 @@ fn watch(root: String, app: AppHandle, state: tauri::State<'_, WatcherState>) ->
     }
     let recent = state.recent_writes.clone();
     let app2 = app.clone();
+    let pending_rename: std::sync::Arc<std::sync::Mutex<Option<(PathBuf, std::time::Instant)>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let pending_rename2 = pending_rename.clone();
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(ev) = res {
@@ -227,11 +231,61 @@ fn watch(root: String, app: AppHandle, state: tauri::State<'_, WatcherState>) ->
                         matches!(s.as_ref(), "node_modules" | "target" | ".git" | "dist" | ".vite")
                     })
                 }
+                fn emit_moved(app: &AppHandle, old_path: &Path, new_path: &Path) {
+                    let _ = app.emit(
+                        "fs:moved",
+                        serde_json::json!({
+                            "oldPath": old_path.to_string_lossy(),
+                            "newPath": new_path.to_string_lossy(),
+                        }),
+                    );
+                }
+
+                match &ev.kind {
+                    EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+                    | EventKind::Modify(ModifyKind::Name(RenameMode::Any)) if ev.paths.len() >= 2 => {
+                        let old_path = &ev.paths[0];
+                        let new_path = &ev.paths[1];
+                        if !ignored_path(old_path) && !ignored_path(new_path) {
+                            emit_moved(&app2, old_path, new_path);
+                        }
+                        return;
+                    }
+                    EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+                        if let Some(old_path) = ev.paths.first() {
+                            if !ignored_path(old_path) {
+                                if let Ok(mut pending) = pending_rename2.lock() {
+                                    *pending = Some((old_path.clone(), now));
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+                        if let Some(new_path) = ev.paths.first() {
+                            let old_path = if let Ok(mut pending) = pending_rename2.lock() {
+                                pending.take().and_then(|(old_path, t)| {
+                                    if now.duration_since(t).as_secs() <= 2 { Some(old_path) } else { None }
+                                })
+                            } else {
+                                None
+                            };
+                            if let Some(old_path) = old_path {
+                                if !ignored_path(&old_path) && !ignored_path(new_path) {
+                                    emit_moved(&app2, &old_path, new_path);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
                 for p in &ev.paths {
                     if ignored_path(p) {
                         continue;
                     }
-                    let kind = match ev.kind {
+                    let kind = match &ev.kind {
                         EventKind::Create(_) => "create",
                         EventKind::Modify(_) => "modify",
                         EventKind::Remove(_) => "delete",

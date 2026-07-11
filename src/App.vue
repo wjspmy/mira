@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick, markRaw } from "vue";
+import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
-import { EditorState, type EditorState as PMEditorState } from "@tiptap/pm/state";
+import { EditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
 import { createLowlight, common } from "lowlight";
@@ -90,8 +90,6 @@ const editor = useEditor({
   },
   onUpdate: () => {
     if (loading) return;
-    const doc = session.activeDoc;
-    if (doc && editor.value) doc.editorState = markRaw(editor.value.state);
     session.markActiveDirty(true);
     scheduleAutosave();
   },
@@ -101,18 +99,6 @@ function getMarkdown(): string {
   const doc = editor.value?.state.doc;
   if (!doc) return "";
   return serializeDocToMarkdown(doc);
-}
-
-function replaceEditorState(state: PMEditorState) {
-  const ed = editor.value;
-  if (!ed) return;
-  loading = true;
-  try {
-    ed.view.updateState(state);
-    undoFloorMd = getMarkdown();
-  } finally {
-    loading = false;
-  }
 }
 
 function resetCurrentHistory() {
@@ -134,19 +120,16 @@ function loadIntoEditor(md: string) {
     ed.commands.setContent(md || "");
     resetCurrentHistory();
     undoFloorMd = getMarkdown();
-    const doc = session.activeDoc;
-    if (doc) doc.editorState = markRaw(ed.state);
   } finally {
     loading = false;
   }
 }
 
-function snapshotEditorState(id: string | null = session.activeId) {
+function snapshotEditorDoc(id: string | null = session.activeId) {
   if (!id || !editor.value) return;
   const doc = session.docs.find((d) => d.id === id);
   if (!doc) return;
   doc.rawMd = getMarkdown();
-  doc.editorState = markRaw(editor.value.state);
 }
 
 function basename(p: string) {
@@ -224,7 +207,7 @@ async function switchTo(newId: string | null) {
   if (oldId && editor.value) {
     const old = session.docs.find((d) => d.id === oldId);
     if (old) {
-      snapshotEditorState(oldId);
+      snapshotEditorDoc(oldId);
       if (old.filePath && old.dirty) {
         try {
           await invoke("write_text_file", { path: old.filePath, content: old.rawMd });
@@ -237,16 +220,12 @@ async function switchTo(newId: string | null) {
     }
   }
   session.setActive(newId);
-  // Restore the incoming tab state first, so each tab has isolated undo/redo history.
+  // Restore from the target tab's own Markdown snapshot. This keeps same-name tabs isolated
+  // and clears history so undo cannot cross into the previous tab.
   if (newId && editor.value) {
     const next = session.docs.find((d) => d.id === newId);
-    // Set current document directory for MiraImage relative path resolving.
     syncEditorDocDir(next?.filePath);
-    if (next?.editorState) {
-      replaceEditorState(next.editorState as PMEditorState);
-    } else if (next) {
-      loadIntoEditor(next.rawMd || "");
-    }
+    if (next) loadIntoEditor(next.rawMd || "");
   } else if (editor.value) {
     syncEditorDocDir(null);
     loadIntoEditor("");
@@ -526,6 +505,7 @@ async function closeDoc(id: string) {
 // 防抖自动保存（仅对已命名文档）
 let timer: ReturnType<typeof setTimeout> | null = null;
 let unlistenFs: UnlistenFn | null = null;
+let unlistenMoved: UnlistenFn | null = null;
 function scheduleAutosave() {
   const doc = session.activeDoc;
   if (!doc || !doc.filePath) return;
@@ -549,7 +529,143 @@ watch([filePath, dirty], () => {
 });
 
 const fsTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+const pendingMoveWindowMs = 1500;
+type PendingFsMovePath = { path: string; timer: ReturnType<typeof setTimeout> };
+const pendingExternalCreates: PendingFsMovePath[] = [];
+const pendingExternalDeletes: PendingFsMovePath[] = [];
+
+function pendingMoveKey(path: string) {
+  return basename(path).toLowerCase();
+}
+
+function hasOpenDocAtOrUnder(path: string) {
+  return session.docs.some((d) => d.filePath && isSameOrChildPath(d.filePath, path));
+}
+
+function takePendingMovePath(list: PendingFsMovePath[], path: string): PendingFsMovePath | null {
+  const key = pendingMoveKey(path);
+  const idx = list.findIndex((item) => pendingMoveKey(item.path) === key);
+  if (idx < 0) return null;
+  const [item] = list.splice(idx, 1);
+  clearTimeout(item.timer);
+  return item;
+}
+
+function removePendingMovePath(list: PendingFsMovePath[], path: string) {
+  const np = normPath(path);
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (normPath(list[i].path) === np) {
+      clearTimeout(list[i].timer);
+      list.splice(i, 1);
+    }
+  }
+}
+
+function clearPendingMovePaths(oldPath: string, newPath: string) {
+  removePendingMovePath(pendingExternalCreates, oldPath);
+  removePendingMovePath(pendingExternalCreates, newPath);
+  removePendingMovePath(pendingExternalDeletes, oldPath);
+  removePendingMovePath(pendingExternalDeletes, newPath);
+}
+
+async function handleMaybeExternalMove(path: string, kind: string): Promise<boolean> {
+  if (kind === "create") {
+    const deleted = takePendingMovePath(pendingExternalDeletes, path);
+    if (deleted) {
+      await handleFsMoved(deleted.path, path);
+      return true;
+    }
+    const item: PendingFsMovePath = {
+      path,
+      timer: setTimeout(() => removePendingMovePath(pendingExternalCreates, path), pendingMoveWindowMs),
+    };
+    pendingExternalCreates.push(item);
+    return false;
+  }
+
+  if (kind === "delete" && hasOpenDocAtOrUnder(path)) {
+    const created = takePendingMovePath(pendingExternalCreates, path);
+    if (created) {
+      await handleFsMoved(path, created.path);
+      return true;
+    }
+    const item: PendingFsMovePath = {
+      path,
+      timer: setTimeout(() => {
+        removePendingMovePath(pendingExternalDeletes, path);
+        void handleFsChanged(path);
+      }, pendingMoveWindowMs),
+    };
+    pendingExternalDeletes.push(item);
+    return true;
+  }
+
+  return false;
+}
+
+function clearAllPendingMovePaths() {
+  for (const item of [...pendingExternalCreates, ...pendingExternalDeletes]) clearTimeout(item.timer);
+  pendingExternalCreates.length = 0;
+  pendingExternalDeletes.length = 0;
+}
+
 const askingDocs = new Set<string>();
+
+async function dedupeOpenDocsForPaths(paths: string[]) {
+  const activeBefore = session.activeId;
+  const seen = new Set(paths.map((p) => normPath(p)));
+  for (const target of seen) {
+    const duplicates = session.docs.filter((d) => d.filePath && normPath(d.filePath) === target);
+    if (duplicates.length <= 1) continue;
+
+    const keeper = duplicates.find((d) => d.id === activeBefore) ?? duplicates.find((d) => d.dirty) ?? duplicates[0];
+    let nextMd = keeper.rawMd;
+    let nextDirty = duplicates.some((d) => d.dirty);
+
+    if (!nextDirty && keeper.filePath) {
+      try {
+        nextMd = await invoke<string>("read_text_file", { path: keeper.filePath });
+      } catch {
+        // Keep the in-memory snapshot if the moved file cannot be read yet.
+      }
+    } else if (keeper.id === activeBefore) {
+      snapshotEditorDoc(keeper.id);
+      nextMd = keeper.rawMd;
+    }
+
+    keeper.rawMd = nextMd;
+    keeper.dirty = nextDirty;
+    for (const doc of duplicates) {
+      if (doc.id !== keeper.id) session.removeDoc(doc.id);
+    }
+
+    if (duplicates.some((d) => d.id === activeBefore)) {
+      session.setActive(keeper.id);
+      syncEditorDocDir(keeper.filePath);
+      loadIntoEditor(keeper.rawMd || "");
+    }
+  }
+}
+
+async function handleFsMoved(oldPath: string, newPath: string) {
+  clearPendingMovePaths(oldPath, newPath);
+  await ws.syncExternalMove(oldPath, newPath);
+
+  const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, oldPath));
+  const changedPaths: string[] = [];
+  for (const doc of affectedDocs) {
+    const nextPath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+    doc.filePath = nextPath;
+    changedPaths.push(nextPath);
+    if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
+  }
+
+  await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
+  if (affectedDocs.length) persistSessionSoon();
+
+  recent.renameRecent(oldPath, newPath);
+  status.value = `External move synced: ${basename(oldPath)} -> ${basename(newPath)}`;
+}
 
 async function handleFsChanged(path: string) {
   const np = normPath(path);
@@ -597,7 +713,6 @@ async function handleFsChanged(path: string) {
     if (!doc.dirty) {
       try {
         doc.rawMd = await invoke<string>("read_text_file", { path });
-        doc.editorState = null;
       } catch {
         /* ignore */
       }
@@ -662,21 +777,32 @@ onMounted(async () => {
       // 文件树只需要结构变化；普通 modify 只交给已打开文档的重载逻辑，避免事件风暴卡顿。
       if (kind === "create" || kind === "delete") {
         try { await ws.refreshForPath(path); } catch { /* ignore */ }
+        if (await handleMaybeExternalMove(path, kind)) return;
       }
       handleFsChanged(path);
     }, 300);
+  });
+  unlistenMoved = await listen<{ oldPath: string; newPath: string }>("fs:moved", async (e) => {
+    const { oldPath, newPath } = e.payload;
+    try {
+      await handleFsMoved(oldPath, newPath);
+    } catch (err) {
+      status.value = `Failed to sync external move: ${err}`;
+    }
   });
   await restoreLastSession();
 });
 
 onBeforeUnmount(() => {
-  snapshotEditorState(session.activeId);
+  snapshotEditorDoc(session.activeId);
   saveDocScroll(session.activeId);
   window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.removeEventListener("mira:image-error", onImageError as EventListener);
   window.removeEventListener("click", closeContextMenu);
   if (timer) clearTimeout(timer);
+  clearAllPendingMovePaths();
   if (unlistenFs) unlistenFs();
+  if (unlistenMoved) unlistenMoved();
   editor.value?.destroy();
 });
 </script>

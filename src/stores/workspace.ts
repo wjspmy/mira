@@ -181,11 +181,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return createFolder(rootPath.value, name);
   }
 
+  function remapNodePath(node: FileNode, oldPath: string, newPath: string): FileNode {
+    const children = node.children?.map((child) => remapNodePath(child, oldPath, newPath)) ?? node.children;
+    return { ...node, path: replacePathPrefix(node.path, oldPath, newPath), children };
+  }
+
   function syncMovedDirCache(oldPath: string, newPath: string) {
     const nextChildren: Record<string, FileNode[] | null> = {};
     for (const [key, value] of Object.entries(childrenMap.value)) {
       const nextKey = replacePathPrefix(key, oldPath, newPath);
-      nextChildren[nextKey] = value;
+      nextChildren[nextKey] = value?.map((node) => remapNodePath(node, oldPath, newPath)) ?? value;
     }
     childrenMap.value = nextChildren;
     const nextExpanded = new Set<string>();
@@ -193,6 +198,50 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       nextExpanded.add(replacePathPrefix(key, oldPath, newPath));
     }
     expanded.value = nextExpanded;
+  }
+
+  function removeMovedCache(oldPath: string) {
+    const removed = normPath(oldPath);
+    const nextChildren: Record<string, FileNode[] | null> = {};
+    for (const [key, value] of Object.entries(childrenMap.value)) {
+      const nk = normPath(key);
+      if (nk === removed || nk.startsWith(removed + "/")) continue;
+      nextChildren[key] = value?.filter((node) => {
+        const np = normPath(node.path);
+        return np !== removed && !np.startsWith(removed + "/");
+      }) ?? value;
+    }
+    childrenMap.value = nextChildren;
+    const nextExpanded = new Set<string>();
+    for (const key of expanded.value) {
+      const nk = normPath(key);
+      if (nk !== removed && !nk.startsWith(removed + "/")) nextExpanded.add(key);
+    }
+    expanded.value = nextExpanded;
+  }
+
+  async function syncExternalMove(oldPath: string, newPath: string) {
+    if (!rootPath.value) return;
+    const oldUnder = isUnderRoot(oldPath);
+    const newUnder = isUnderRoot(newPath);
+    if (!oldUnder && !newUnder) return;
+
+    if (oldUnder && newUnder) {
+      syncMovedDirCache(oldPath, newPath);
+    } else if (oldUnder && !newUnder) {
+      removeMovedCache(oldPath);
+    }
+
+    const dirs = new Set<string>();
+    const oldDir = parentDir(oldPath);
+    const newDir = parentDir(newPath);
+    if (oldDir && isUnderRoot(oldDir) && oldDir in childrenMap.value) dirs.add(oldDir);
+    if (newDir && isUnderRoot(newDir) && newDir in childrenMap.value) dirs.add(newDir);
+    if (newUnder && newPath in childrenMap.value) dirs.add(newPath);
+
+    for (const dir of dirs) {
+      await refreshDir(dir, false);
+    }
   }
 
   async function moveNodeToDir(node: FileNode, targetDir: string): Promise<string> {
@@ -256,5 +305,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.removeItem(WORKSPACE_ROOT_KEY);
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, createFile, createFolder, createFileInRoot, createFolderInRoot, moveNodeToDir, renameNode, deleteNode, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
+  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, syncExternalMove, createFile, createFolder, createFileInRoot, createFolderInRoot, moveNodeToDir, renameNode, deleteNode, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
 });

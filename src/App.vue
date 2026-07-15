@@ -24,6 +24,7 @@ import Tabs from "./components/Tabs.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
@@ -503,9 +504,47 @@ async function closeDoc(id: string) {
 }
 
 // 防抖自动保存（仅对已命名文档）
+function dirtyDocs() {
+  return session.docs.filter((d) => d.dirty);
+}
+
+async function handleWindowCloseRequested(event: CloseRequestedEvent) {
+  if (forceWindowClose) return;
+  snapshotEditorDoc(session.activeId);
+  const docs = dirtyDocs();
+  if (!docs.length) return;
+
+  event.preventDefault();
+  const ok = await ask(`还有 ${docs.length} 个未保存文档，确认退出并丢弃这些修改？`, {
+    title: "Mira",
+    kind: "warning",
+  });
+  if (!ok) {
+    status.value = "已取消关闭，未保存修改仍保留";
+    return;
+  }
+
+  forceWindowClose = true;
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  persistSessionSoon();
+
+  try {
+    await getCurrentWindow().destroy();
+  } catch (err) {
+    forceWindowClose = false;
+    status.value = `关闭窗口失败：${err}`;
+  }
+}
+
+
 let timer: ReturnType<typeof setTimeout> | null = null;
 let unlistenFs: UnlistenFn | null = null;
 let unlistenMoved: UnlistenFn | null = null;
+let unlistenWindowClose: UnlistenFn | null = null;
+let forceWindowClose = false;
 function scheduleAutosave() {
   const doc = session.activeDoc;
   if (!doc || !doc.filePath) return;
@@ -767,6 +806,7 @@ onMounted(async () => {
   window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.addEventListener("mira:image-error", onImageError as EventListener);
   window.addEventListener("click", closeContextMenu);
+  unlistenWindowClose = await getCurrentWindow().onCloseRequested(handleWindowCloseRequested);
   // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
   unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
     const { path, kind } = e.payload;
@@ -803,6 +843,7 @@ onBeforeUnmount(() => {
   clearAllPendingMovePaths();
   if (unlistenFs) unlistenFs();
   if (unlistenMoved) unlistenMoved();
+  if (unlistenWindowClose) unlistenWindowClose();
   editor.value?.destroy();
 });
 </script>

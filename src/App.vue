@@ -348,11 +348,15 @@ async function renameWorkspaceNode(node: FileNode) {
   try {
     const newPath = await ws.renameNode(node, newName);
     const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, oldPath));
+    const changedPaths: string[] = [];
     for (const doc of affectedDocs) {
-      doc.filePath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+      const nextPath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+      doc.filePath = nextPath;
+      changedPaths.push(nextPath);
       if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
     }
-    if (affectedDocs.length) persistSessionSoon();
+    const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
+    if (affectedDocs.length || deduped) persistSessionSoon();
     recent.renameRecent(oldPath, newPath);
     status.value = `已重命名为 ${basename(newPath)}`;
   } catch (e) {
@@ -371,11 +375,15 @@ async function moveWorkspaceNode(node: FileNode) {
   try {
     const newPath = await ws.moveNodeToDir(node, targetDir);
     const affectedDocs = session.docs.filter((d) => d.filePath && isSameOrChildPath(d.filePath, oldPath));
+    const changedPaths: string[] = [];
     for (const doc of affectedDocs) {
-      doc.filePath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+      const nextPath = replacePathPrefix(doc.filePath!, oldPath, newPath);
+      doc.filePath = nextPath;
+      changedPaths.push(nextPath);
       if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
     }
-    if (affectedDocs.length) persistSessionSoon();
+    const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
+    if (affectedDocs.length || deduped) persistSessionSoon();
     recent.renameRecent(oldPath, newPath);
     status.value = `已移动到 ${targetDir}`;
   } catch (e) {
@@ -650,16 +658,21 @@ function clearAllPendingMovePaths() {
 
 const askingDocs = new Set<string>();
 
-async function dedupeOpenDocsForPaths(paths: string[]) {
+async function dedupeOpenDocsForPaths(paths: string[]): Promise<boolean> {
+  let changed = false;
   const activeBefore = session.activeId;
   const seen = new Set(paths.map((p) => normPath(p)));
   for (const target of seen) {
     const duplicates = session.docs.filter((d) => d.filePath && normPath(d.filePath) === target);
     if (duplicates.length <= 1) continue;
 
-    const keeper = duplicates.find((d) => d.id === activeBefore) ?? duplicates.find((d) => d.dirty) ?? duplicates[0];
+    // Prefer a dirty duplicate over a clean active tab so external/internal moves never drop unsaved edits.
+    const activeDuplicate = duplicates.find((d) => d.id === activeBefore);
+    const dirtyDuplicate = activeDuplicate?.dirty ? activeDuplicate : duplicates.find((d) => d.dirty);
+    const keeper = dirtyDuplicate ?? activeDuplicate ?? duplicates[0];
+    if (keeper.id === activeBefore && keeper.dirty) snapshotEditorDoc(keeper.id);
     let nextMd = keeper.rawMd;
-    let nextDirty = duplicates.some((d) => d.dirty);
+    const nextDirty = duplicates.some((d) => d.dirty);
 
     if (!nextDirty && keeper.filePath) {
       try {
@@ -667,15 +680,15 @@ async function dedupeOpenDocsForPaths(paths: string[]) {
       } catch {
         // Keep the in-memory snapshot if the moved file cannot be read yet.
       }
-    } else if (keeper.id === activeBefore) {
-      snapshotEditorDoc(keeper.id);
-      nextMd = keeper.rawMd;
     }
 
     keeper.rawMd = nextMd;
     keeper.dirty = nextDirty;
     for (const doc of duplicates) {
-      if (doc.id !== keeper.id) session.removeDoc(doc.id);
+      if (doc.id !== keeper.id) {
+        session.removeDoc(doc.id);
+        changed = true;
+      }
     }
 
     if (duplicates.some((d) => d.id === activeBefore)) {
@@ -684,6 +697,7 @@ async function dedupeOpenDocsForPaths(paths: string[]) {
       loadIntoEditor(keeper.rawMd || "");
     }
   }
+  return changed;
 }
 
 async function handleFsMoved(oldPath: string, newPath: string) {
@@ -699,8 +713,8 @@ async function handleFsMoved(oldPath: string, newPath: string) {
     if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
   }
 
-  await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
-  if (affectedDocs.length) persistSessionSoon();
+  const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
+  if (affectedDocs.length || deduped) persistSessionSoon();
 
   recent.renameRecent(oldPath, newPath);
   status.value = `External move synced: ${basename(oldPath)} -> ${basename(newPath)}`;

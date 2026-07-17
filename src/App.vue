@@ -197,8 +197,8 @@ function uuid() {
   return (crypto as any).randomUUID?.() ?? String(Date.now()) + Math.random();
 }
 
-// 显式切换：先同步保存旧 doc 的 markdown，再 setActive，再 setContent 新 doc。
-// TODO: undo/redo 跨标签（setContent 不清历史）；尝试重建 EditorState 清历史未通过用户测试，待解。
+// 显式切换：先同步保存旧 doc 的 markdown，再 setActive，再加载目标 doc 的快照。
+// 每个 tab 持有独立 rawMd/scrollTop；loadIntoEditor() 会重建当前 EditorState，避免 undo/redo 跨标签串历史。
 async function switchTo(newId: string | null) {
   const oldId = session.activeId;
   if (newId === oldId) return;

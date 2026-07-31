@@ -57,13 +57,33 @@ watch(theme, (t) => {
 applyTheme(theme.value);
 
 const lowlight = createLowlight(common);
+const MiraCodeBlockLowlight = CodeBlockLowlight.extend({
+  renderHTML({ node, HTMLAttributes }: any) {
+    const language = node.attrs.language as string | null;
+    return [
+      "pre",
+      {
+        ...this.options.HTMLAttributes,
+        ...HTMLAttributes,
+        ...(language ? { "data-language": language } : {}),
+      },
+      [
+        "code",
+        {
+          class: language ? this.options.languageClassPrefix + language : null,
+        },
+        0,
+      ],
+    ];
+  },
+});
 let loading = false; // Suppress onUpdate during programmatic editor state changes.
 let undoFloorMd = ""; // Fallback guard: prevent undo from crossing the current tab baseline.
 
 const editor = useEditor({
   extensions: [
     StarterKit.configure({ codeBlock: false }),
-    CodeBlockLowlight.configure({ lowlight }),
+    MiraCodeBlockLowlight.configure({ lowlight }),
     Table,
     TableRow,
     TableHeader,

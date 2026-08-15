@@ -400,7 +400,7 @@ sequenceDiagram
 | --- | --- | --- |
 | **M0 脚手架** ✅ | 跑通端到端 | Tauri + Vue + Vite 工程，能打开/编辑/保存单个 .md |
 | **M1 MVP 核心** ✅ | 可日常写作 | Tiptap WYSIWYG、GFM（表格/任务列表/删除线）、代码高亮（lowlight）、KaTeX 数学、自动保存、浅/深主题、自研 remark 序列化器 + 18/18 round-trip 测试 |
-| **M2 文件管理** 🚧 | 工作区体验 | 核心能力已完成：文件树、多标签、最近打开、新建/重命名/移动/删除、文件监听、外部移动同步、图片本地化、路径沙箱、编码/BOM/行尾保留、dirty / 未命名文档草稿恢复；收尾中：复杂文件系统事件与崩溃恢复回归 |
+| **M2 文件管理** ✅ | 工作区体验 | 已完成并验收：文件树、多标签、最近打开、新建/重命名/移动/删除、文件监听、外部移动同步、图片本地化、路径沙箱、编码/BOM/行尾保留、dirty / 未命名文档草稿恢复；已补充 path/store 回归测试 |
 | **M3 生产力增强** | 进阶体验 | 命令面板、源码模式开关（CodeMirror 6）、自定义 CSS、快捷键设置 |
 | **M4 打磨发布** | 发布前优化 | 性能调优、大文件支持、崩溃恢复、三端打包测试、自动更新（GitHub Releases） |
 | **M5 导出（后续）** | 增量能力 | 导出 PDF/HTML/docx/图片（见 §6.4） |
@@ -498,7 +498,7 @@ Image.extend({
 | `SelectionBubble` | plugin | 选区浮动工具条（加粗/链接…） | 文本选中 |
 | `CodeBlockView` | nodeView | 代码块"编辑/渲染"切换 | focus in/out |
 | `MathView` | nodeView | 数学块 KaTeX 渲染 + 原文编辑 | focus in/out |
-| `SlashCommand` | plugin | `/` 触发插入菜单 | 输入 `/`（可选，M2） |
+| `SlashCommand` | plugin | `/` 触发插入菜单 | 输入 `/`（M3） |
 | `TableNav` | plugin | Tab/方向键在表格内导航 | 键盘 |
 
 ### 14.3 Markdown 序列化策略（最关键）

@@ -3,7 +3,7 @@
 > 所见，即所得。A minimalist desktop Markdown WYSIWYG editor.
 
 对标 [Typora](https://typora.io) 的桌面 Markdown 编辑器：本地优先、单用户、开源、轻量。
-完整设计与路线图见 [docs/design.md](docs/design.md)。已知未解决问题见 [docs/known-issues.md](docs/known-issues.md)。
+完整设计与路线图见 [docs/design.md](docs/design.md)。M2 修复与回归记录见 [docs/known-issues.md](docs/known-issues.md)。
 
 ## 功能
 
@@ -36,11 +36,11 @@ npm test              # 跑 round-trip 测试
 
 ## 状态
 
-**M0 + M1 已完成，M2 文件管理进入最终回归**：已具备日常写作与基础工作区体验。
+**M0 + M1 + M2 已完成**：已具备日常写作与基础工作区体验。
 
-M2 当前已覆盖：文件树、多标签、最近打开、新建/重命名/移动/删除、文件监听、外部移动同步、图片本地化、路径沙箱、编码/BOM/行尾保留，以及 dirty / 未命名文档草稿恢复。后续收尾重点见 [docs/known-issues.md](docs/known-issues.md)：复杂文件系统事件与崩溃恢复场景的持续回归。
+M2 已覆盖并验收：文件树、多标签、最近打开、新建/重命名/移动/删除、文件监听、外部移动同步、图片本地化、路径沙箱、编码/BOM/行尾保留，以及 dirty / 未命名文档草稿恢复。后续进入 M3 生产力增强。
 
-路线图：~~M0 脚手架~~ ✅ → ~~M1 核心~~ ✅ → M2 文件管理（最终回归）→ M3 生产力 → M4 打磨发布 → M5 导出。
+路线图：~~M0 脚手架~~ ✅ → ~~M1 核心~~ ✅ → ~~M2 文件管理~~ ✅ → M3 生产力 → M4 打磨发布 → M5 导出。
 
 ## License
 

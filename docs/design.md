@@ -817,7 +817,7 @@ pub enum FsError {
 
 | 层 | 范围 | 工具 |
 | --- | --- | --- |
-| 单元 | 序列化器、编码探测、路径沙箱、草稿恢复判定 | Vitest |
+| 单元 | 序列化器、路径归一化 / 移动前缀替换、编码探测、路径沙箱、草稿恢复判定 | Vitest |
 | Round-trip | **核心**：100+ 真实 MD 样本，`parse→serialize` 后 mdast 等价 | 自建语料 + Vitest |
 | 组件 | 文件树、命令面板、标签页 | Vue Test Utils |
 | E2E | 打开→编辑→保存→重开一致；图片粘贴；导出 | Tauri WebDriver / Playwright |

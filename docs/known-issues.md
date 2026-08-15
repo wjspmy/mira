@@ -34,6 +34,7 @@
 ### 修复记录
 
 - `e30f2cf Fix file move tab synchronization`
+- Task 7：抽取公共路径工具并补充路径归一化 / 前缀替换单元测试。
 
 ### 当前判断
 
@@ -52,7 +53,7 @@ fs:moved { oldPath, newPath }
 - 当前编辑器图片解析目录；
 - 目标路径重复 tab 的合并。
 
-同时，前端也对 Windows 上常见的 `delete + create` 组合事件做了短时间窗口内的兜底配对。
+同时，前端也对 Windows 上常见的 `delete + create` 组合事件做了短时间窗口内的兜底配对。路径归一化、父子路径判断与移动前缀替换逻辑已抽到公共工具，避免 App / store 多份实现漂移。
 
 ### 建议回归场景
 

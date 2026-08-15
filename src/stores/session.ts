@@ -1,6 +1,7 @@
 // 会话 store（设计 §15.1）：打开的文档列表 + 活动标签
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
+import { normalizeNativePath, normPath } from "../utils/path";
 
 export interface Doc {
   id: string;
@@ -16,18 +17,6 @@ export interface SessionSnapshot {
 }
 
 const SESSION_KEY = "mira-session";
-
-function normalizeNativePath(path: string): string {
-  const uncPrefix = "\\\\?\\UNC\\";
-  const localPrefix = "\\\\?\\";
-  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
-  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
-  return path;
-}
-
-function normPath(p: string): string {
-  return normalizeNativePath(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
-}
 
 export const useSessionStore = defineStore("session", () => {
   const docs = ref<Doc[]>([]);

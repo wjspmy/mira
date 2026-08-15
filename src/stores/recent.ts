@@ -1,29 +1,10 @@
 // 最近打开的文件（设计 §15.1 / §16）：持久化到 localStorage，上限 20 条
 import { defineStore } from "pinia";
 import { ref } from "vue";
+import { normalizeNativePath, normPath, replacePathPrefix } from "../utils/path";
 
 const RECENT_KEY = "mira-recent";
 const MAX = 20;
-
-function normalizeNativePath(path: string): string {
-  const uncPrefix = "\\\\?\\UNC\\";
-  const localPrefix = "\\\\?\\";
-  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
-  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
-  return path;
-}
-
-function normPath(p: string): string {
-  return normalizeNativePath(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
-}
-
-function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
-  const np = normPath(path);
-  const oldNorm = normPath(oldPrefix);
-  if (np === oldNorm) return newPrefix;
-  if (!np.startsWith(oldNorm + "/")) return path;
-  return newPrefix.replace(/[\\/]+$/, "") + path.slice(oldPrefix.length);
-}
 
 export const useRecentStore = defineStore("recent", () => {
   const recentPaths = ref<string[]>(load());

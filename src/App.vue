@@ -25,6 +25,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window";
+import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, replacePathPrefix } from "./utils/path";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
@@ -244,40 +245,6 @@ function snapshotEditorDoc(id: string | null = session.activeId) {
   const doc = session.docs.find((d) => d.id === id);
   if (!doc) return;
   doc.rawMd = getMarkdown();
-}
-
-function basename(p: string) {
-  const a = p.split(/[\\/]/);
-  return a[a.length - 1];
-}
-
-function normPath(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
-}
-
-function isSameOrChildPath(path: string, root: string): boolean {
-  const p = normPath(path);
-  const r = normPath(root);
-  return p === r || p.startsWith(r + "/");
-}
-
-function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
-  const p = normPath(path);
-  const old = normPath(oldPrefix);
-  if (p === old) return newPrefix;
-  if (!p.startsWith(old + "/")) return path;
-  return newPrefix.replace(/[\\/]+$/, "") + path.slice(oldPrefix.length);
-}
-
-function dirname(p: string): string {
-  const sep = p.includes("\\") ? "\\" : "/";
-  return p.lastIndexOf(sep) >= 0 ? p.slice(0, p.lastIndexOf(sep)) : "";
-}
-
-function normalizeNativePath(p: string): string {
-  if (p.startsWith("\\\\?\\UNC\\")) return "\\\\" + p.slice("\\\\?\\UNC\\".length);
-  if (p.startsWith("\\\\?\\")) return p.slice("\\\\?\\".length);
-  return p;
 }
 
 function syncEditorDocDir(path: string | null | undefined) {

@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { dirname as parentDir, joinPath, normPath, normalizeNativePath, replacePathPrefix } from "../utils/path";
 
 export interface FileNode {
   name: string;
@@ -13,36 +14,6 @@ export interface FileNode {
 
 const IGNORE = ["node_modules", "target", ".git", "dist", ".vite"];
 const WORKSPACE_ROOT_KEY = "mira-workspace-root";
-
-function normalizeNativePath(path: string): string {
-  const uncPrefix = "\\\\?\\UNC\\";
-  const localPrefix = "\\\\?\\";
-  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
-  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
-  return path;
-}
-
-function normPath(p: string): string {
-  return normalizeNativePath(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
-}
-
-function parentDir(path: string): string {
-  const sep = path.includes("\\") ? "\\" : "/";
-  return path.lastIndexOf(sep) >= 0 ? path.slice(0, path.lastIndexOf(sep)) : "";
-}
-
-function joinPath(dir: string, name: string): string {
-  const sep = dir.includes("\\") ? "\\" : "/";
-  return dir.replace(/[\\/]+$/, "") + sep + name;
-}
-
-function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
-  const np = normPath(path);
-  const oldNorm = normPath(oldPrefix);
-  if (np === oldNorm) return newPrefix;
-  if (!np.startsWith(oldNorm + "/")) return path;
-  return newPrefix.replace(/[\\/]+$/, "") + path.slice(oldPrefix.length);
-}
 
 function normalizeFileName(name: string): string {
   const n = validateName(name);

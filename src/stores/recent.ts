@@ -5,8 +5,16 @@ import { ref } from "vue";
 const RECENT_KEY = "mira-recent";
 const MAX = 20;
 
+function normalizeNativePath(path: string): string {
+  const uncPrefix = "\\\\?\\UNC\\";
+  const localPrefix = "\\\\?\\";
+  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
+  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
+  return path;
+}
+
 function normPath(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+  return normalizeNativePath(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
 function replacePathPrefix(path: string, oldPrefix: string, newPrefix: string): string {
@@ -23,7 +31,7 @@ export const useRecentStore = defineStore("recent", () => {
   function load(): string[] {
     try {
       const arr = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
-      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string").map(normalizeNativePath) : [];
     } catch {
       return [];
     }
@@ -34,6 +42,7 @@ export const useRecentStore = defineStore("recent", () => {
   }
 
   function addRecent(path: string) {
+    path = normalizeNativePath(path);
     const np = normPath(path);
     recentPaths.value = [path, ...recentPaths.value.filter((p) => normPath(p) !== np)].slice(0, MAX);
     persist();

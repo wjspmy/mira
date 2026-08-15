@@ -181,6 +181,12 @@ function dirname(p: string): string {
   return p.lastIndexOf(sep) >= 0 ? p.slice(0, p.lastIndexOf(sep)) : "";
 }
 
+function normalizeNativePath(p: string): string {
+  if (p.startsWith("\\\\?\\UNC\\")) return "\\\\" + p.slice("\\\\?\\UNC\\".length);
+  if (p.startsWith("\\\\?\\")) return p.slice("\\\\?\\".length);
+  return p;
+}
+
 function syncEditorDocDir(path: string | null | undefined) {
   if (!editor.value) return;
   editor.value.storage.miraDocDir = path ? dirname(path) || undefined : undefined;
@@ -271,7 +277,9 @@ async function openFile(path?: string) {
     path = typeof selected === "string" ? selected : (selected as any).path;
     if (!path) return;
   }
+  path = normalizeNativePath(path);
   try {
+    await invoke("allow_path", { path });
     const text = await invoke<string>("read_text_file", { path });
     const existing = session.findDocByPath(path);
     if (existing) {
@@ -308,6 +316,7 @@ async function saveFile() {
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
     if (!path) return;
+    path = normalizeNativePath(path);
     doc.filePath = path;
     syncEditorDocDir(path);
     const dir = dirname(path);
@@ -315,7 +324,9 @@ async function saveFile() {
       try { await invoke("watch", { root: dir }); } catch { /* ignore */ }
     }
   }
+  path = normalizeNativePath(path);
   try {
+    await invoke("allow_path", { path });
     await invoke("write_text_file", { path, content: md });
     doc.rawMd = md;
     doc.dirty = false;
@@ -389,8 +400,9 @@ async function renameWorkspaceNode(node: FileNode) {
 async function moveWorkspaceNode(node: FileNode) {
   const selected = await openDialog({ directory: true, multiple: false, defaultPath: ws.rootPath ?? undefined });
   if (!selected) return;
-  const targetDir = typeof selected === "string" ? selected : (selected as any).path;
-  if (!targetDir) return;
+  const selectedPath = typeof selected === "string" ? selected : (selected as any).path;
+  if (!selectedPath) return;
+  const targetDir = normalizeNativePath(selectedPath);
   const oldPath = node.path;
   try {
     const newPath = await ws.moveNodeToDir(node, targetDir);
@@ -721,6 +733,8 @@ async function dedupeOpenDocsForPaths(paths: string[]): Promise<boolean> {
 }
 
 async function handleFsMoved(oldPath: string, newPath: string) {
+  oldPath = normalizeNativePath(oldPath);
+  newPath = normalizeNativePath(newPath);
   clearPendingMovePaths(oldPath, newPath);
   await ws.syncExternalMove(oldPath, newPath);
 
@@ -741,6 +755,7 @@ async function handleFsMoved(oldPath: string, newPath: string) {
 }
 
 async function handleFsChanged(path: string) {
+  path = normalizeNativePath(path);
   const np = normPath(path);
   const doc = session.docs.find((d) => d.filePath && normPath(d.filePath) === np);
   if (!doc) return; // 不在任何已打开 tab 中，忽略

@@ -15,8 +15,16 @@ function notifyError(message: string) {
   window.dispatchEvent(new CustomEvent("mira:image-error", { detail: { message } }));
 }
 
+function normalizeNativePath(path: string): string {
+  const uncPrefix = "\\\\?\\UNC\\";
+  const localPrefix = "\\\\?\\";
+  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
+  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
+  return path;
+}
 function currentDocDir(editor: any): string | undefined {
-  return editor.storage?.[DOC_DIR_KEY];
+  const docDir = editor.storage?.[DOC_DIR_KEY];
+  return docDir ? normalizeNativePath(docDir) : docDir;
 }
 
 function ensureDocDir(editor: any): string | null {

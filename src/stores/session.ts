@@ -17,8 +17,16 @@ export interface SessionSnapshot {
 
 const SESSION_KEY = "mira-session";
 
+function normalizeNativePath(path: string): string {
+  const uncPrefix = "\\\\?\\UNC\\";
+  const localPrefix = "\\\\?\\";
+  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
+  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
+  return path;
+}
+
 function normPath(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+  return normalizeNativePath(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
 export const useSessionStore = defineStore("session", () => {
@@ -58,9 +66,9 @@ export const useSessionStore = defineStore("session", () => {
       const key = normPath(d.filePath);
       if (seen.has(key)) continue;
       seen.add(key);
-      openPaths.push(d.filePath);
+      openPaths.push(normalizeNativePath(d.filePath));
     }
-    return { openPaths, activePath: activeDoc.value?.filePath ?? null };
+    return { openPaths, activePath: activeDoc.value?.filePath ? normalizeNativePath(activeDoc.value.filePath) : null };
   }
 
   function persistSession() {
@@ -71,8 +79,8 @@ export const useSessionStore = defineStore("session", () => {
     try {
       const raw = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
       if (!raw || !Array.isArray(raw.openPaths)) return { openPaths: [], activePath: null };
-      const openPaths = raw.openPaths.filter((p: unknown) => typeof p === "string");
-      const activePath = typeof raw.activePath === "string" ? raw.activePath : null;
+      const openPaths = raw.openPaths.filter((p: unknown): p is string => typeof p === "string").map(normalizeNativePath);
+      const activePath = typeof raw.activePath === "string" ? normalizeNativePath(raw.activePath) : null;
       return { openPaths, activePath };
     } catch {
       return { openPaths: [], activePath: null };

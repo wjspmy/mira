@@ -14,8 +14,16 @@ export interface FileNode {
 const IGNORE = ["node_modules", "target", ".git", "dist", ".vite"];
 const WORKSPACE_ROOT_KEY = "mira-workspace-root";
 
+function normalizeNativePath(path: string): string {
+  const uncPrefix = "\\\\?\\UNC\\";
+  const localPrefix = "\\\\?\\";
+  if (path.startsWith(uncPrefix)) return "\\\\" + path.slice(uncPrefix.length);
+  if (path.startsWith(localPrefix)) return path.slice(localPrefix.length);
+  return path;
+}
+
 function normPath(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+  return normalizeNativePath(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
 function parentDir(path: string): string {
@@ -80,6 +88,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function setRoot(path: string) {
+    path = normalizeNativePath(path);
+    await invoke("allow_path", { path });
     // 切换根：停掉旧根监听
     if (rootPath.value && rootPath.value !== path) {
       try {
@@ -298,7 +308,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   function savedRoot() {
-    return localStorage.getItem(WORKSPACE_ROOT_KEY);
+    const root = localStorage.getItem(WORKSPACE_ROOT_KEY);
+    return root ? normalizeNativePath(root) : root;
   }
 
   function clearSavedRoot() {

@@ -11,19 +11,245 @@ use tauri::{AppHandle, Emitter};
 #[tauri::command]
 fn read_text_file(path: String, state: tauri::State<'_, WatcherState>) -> Result<String, String> {
     let target = ensure_existing_allowed(Path::new(&path), &state)?;
-    fs::read_to_string(target).map_err(|e| e.to_string())
+    let bytes = fs::read(&target).map_err(|e| e.to_string())?;
+    let (content, format) = decode_text_file(&bytes)?;
+    if let Ok(mut formats) = state.text_formats.lock() {
+        formats.insert(display_path_string(&target), format);
+    }
+    Ok(content)
+}
+
+#[derive(Clone, Copy)]
+enum TextEncoding {
+    Utf8,
+    Utf8Bom,
+    Gbk,
+}
+
+#[derive(Clone, Copy)]
+enum LineEnding {
+    Lf,
+    CrLf,
+    Cr,
+}
+
+#[derive(Clone, Copy)]
+struct TextFileFormat {
+    encoding: TextEncoding,
+    line_ending: LineEnding,
+}
+
+impl Default for TextFileFormat {
+    fn default() -> Self {
+        Self {
+            encoding: TextEncoding::Utf8,
+            line_ending: LineEnding::Lf,
+        }
+    }
 }
 
 struct WatcherState {
     watchers: std::sync::Arc<std::sync::Mutex<HashMap<String, RecommendedWatcher>>>,
     recent_writes: std::sync::Arc<std::sync::Mutex<HashMap<String, std::time::Instant>>>,
     allowed_roots: std::sync::Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+    text_formats: std::sync::Arc<std::sync::Mutex<HashMap<String, TextFileFormat>>>,
 }
 
 fn canonical_existing(path: &Path) -> Result<PathBuf, String> {
     path.canonicalize().map_err(|e| e.to_string())
 }
 
+fn detect_line_ending(text: &str) -> LineEnding {
+    let bytes = text.as_bytes();
+    let mut crlf = 0usize;
+    let mut lf = 0usize;
+    let mut cr = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
+                crlf += 1;
+                i += 2;
+            }
+            b'\r' => {
+                cr += 1;
+                i += 1;
+            }
+            b'\n' => {
+                lf += 1;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    if crlf > 0 && crlf >= lf && crlf >= cr {
+        LineEnding::CrLf
+    } else if cr > 0 && cr >= lf {
+        LineEnding::Cr
+    } else {
+        LineEnding::Lf
+    }
+}
+
+fn normalize_line_endings(content: &str, line_ending: LineEnding) -> String {
+    let lf = content.replace("\r\n", "\n").replace('\r', "\n");
+    match line_ending {
+        LineEnding::Lf => lf,
+        LineEnding::CrLf => lf.replace('\n', "\r\n"),
+        LineEnding::Cr => lf.replace('\n', "\r"),
+    }
+}
+
+#[cfg(windows)]
+fn decode_gbk(bytes: &[u8]) -> Result<String, String> {
+    const CP_GBK: u32 = 936;
+    const MB_ERR_INVALID_CHARS: u32 = 0x0000_0008;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            flags: u32,
+            multi_byte: *const i8,
+            multi_byte_len: i32,
+            wide_char: *mut u16,
+            wide_char_len: i32,
+        ) -> i32;
+    }
+
+    let input_len = i32::try_from(bytes.len()).map_err(|_| "File is too large".to_string())?;
+    let needed = unsafe {
+        MultiByteToWideChar(
+            CP_GBK,
+            MB_ERR_INVALID_CHARS,
+            bytes.as_ptr() as *const i8,
+            input_len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if needed <= 0 {
+        return Err("Unsupported text encoding".to_string());
+    }
+    let mut wide = vec![0u16; needed as usize];
+    let written = unsafe {
+        MultiByteToWideChar(
+            CP_GBK,
+            MB_ERR_INVALID_CHARS,
+            bytes.as_ptr() as *const i8,
+            input_len,
+            wide.as_mut_ptr(),
+            needed,
+        )
+    };
+    if written != needed {
+        return Err("Unsupported text encoding".to_string());
+    }
+    String::from_utf16(&wide).map_err(|_| "Unsupported text encoding".to_string())
+}
+
+#[cfg(not(windows))]
+fn decode_gbk(_bytes: &[u8]) -> Result<String, String> {
+    Err("GBK text is only supported on Windows".to_string())
+}
+
+#[cfg(windows)]
+fn encode_gbk(content: &str) -> Result<Vec<u8>, String> {
+    const CP_GBK: u32 = 936;
+    const WC_NO_BEST_FIT_CHARS: u32 = 0x0000_0400;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn WideCharToMultiByte(
+            code_page: u32,
+            flags: u32,
+            wide_char: *const u16,
+            wide_char_len: i32,
+            multi_byte: *mut i8,
+            multi_byte_len: i32,
+            default_char: *const i8,
+            used_default_char: *mut i32,
+        ) -> i32;
+    }
+
+    let wide: Vec<u16> = content.encode_utf16().collect();
+    let input_len = i32::try_from(wide.len()).map_err(|_| "File is too large".to_string())?;
+    let needed = unsafe {
+        WideCharToMultiByte(
+            CP_GBK,
+            WC_NO_BEST_FIT_CHARS,
+            wide.as_ptr(),
+            input_len,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+        )
+    };
+    if needed <= 0 {
+        return Err("Text contains characters that cannot be saved as GBK".to_string());
+    }
+    let mut bytes = vec![0u8; needed as usize];
+    let mut used_default = 0i32;
+    let written = unsafe {
+        WideCharToMultiByte(
+            CP_GBK,
+            WC_NO_BEST_FIT_CHARS,
+            wide.as_ptr(),
+            input_len,
+            bytes.as_mut_ptr() as *mut i8,
+            needed,
+            std::ptr::null(),
+            &mut used_default,
+        )
+    };
+    if written != needed || used_default != 0 {
+        return Err("Text contains characters that cannot be saved as GBK".to_string());
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn encode_gbk(_content: &str) -> Result<Vec<u8>, String> {
+    Err("GBK text is only supported on Windows".to_string())
+}
+fn decode_text_file(bytes: &[u8]) -> Result<(String, TextFileFormat), String> {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        let content = String::from_utf8(bytes[3..].to_vec())
+            .map_err(|_| "File is not valid UTF-8 BOM text".to_string())?;
+        let format = TextFileFormat {
+            encoding: TextEncoding::Utf8Bom,
+            line_ending: detect_line_ending(&content),
+        };
+        return Ok((content, format));
+    }
+
+    if let Ok(content) = String::from_utf8(bytes.to_vec()) {
+        let format = TextFileFormat {
+            encoding: TextEncoding::Utf8,
+            line_ending: detect_line_ending(&content),
+        };
+        return Ok((content, format));
+    }
+
+    let content = decode_gbk(bytes)?;
+    let format = TextFileFormat {
+        encoding: TextEncoding::Gbk,
+        line_ending: detect_line_ending(&content),
+    };
+    Ok((content, format))
+}
+
+fn encode_text_file(content: &str, format: TextFileFormat) -> Result<Vec<u8>, String> {
+    let content = normalize_line_endings(content, format.line_ending);
+    match format.encoding {
+        TextEncoding::Utf8 => Ok(content.into_bytes()),
+        TextEncoding::Utf8Bom => {
+            let mut bytes = vec![0xEF, 0xBB, 0xBF];
+            bytes.extend_from_slice(content.as_bytes());
+            Ok(bytes)
+        }
+        TextEncoding::Gbk => encode_gbk(&content),
+    }
+}
 fn strip_extended_path_prefix(path: &str) -> String {
     #[cfg(windows)]
     {
@@ -90,9 +316,18 @@ fn allow_path(path: String, state: tauri::State<'_, WatcherState>) -> Result<(),
 #[tauri::command]
 fn write_text_file(path: String, content: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
     let target = ensure_target_allowed(Path::new(&path), &state)?;
+    let target_key = display_path_string(&target);
     if let Ok(mut rw) = state.recent_writes.lock() {
-        rw.insert(display_path_string(&target), std::time::Instant::now());
+        rw.insert(target_key.clone(), std::time::Instant::now());
     }
+    let format = state
+        .text_formats
+        .lock()
+        .ok()
+        .and_then(|formats| formats.get(&target_key).copied())
+        .or_else(|| fs::read(&target).ok().and_then(|bytes| decode_text_file(&bytes).ok().map(|(_, format)| format)))
+        .unwrap_or_default();
+    let bytes = encode_text_file(&content, format)?;
 
     let dir = target.parent().ok_or_else(|| "Invalid path".to_string())?;
     let file_name = target
@@ -102,9 +337,13 @@ fn write_text_file(path: String, content: String, state: tauri::State<'_, Watche
     let tmp = dir.join(format!(".mira-tmp-{file_name}"));
 
     let mut file = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-    file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &target).map_err(|e| e.to_string())
+    fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+    if let Ok(mut formats) = state.text_formats.lock() {
+        formats.insert(target_key, format);
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Clone)]
@@ -200,12 +439,20 @@ fn rename_path(old_path: String, new_path: String, state: tauri::State<'_, Watch
     if old_path.to_lowercase() != new_path.to_lowercase() && new.exists() {
         return Err("Target already exists".to_string());
     }
+    let old_key = display_path_string(&old);
+    let new_key = display_path_string(&new);
     if let Ok(mut rw) = state.recent_writes.lock() {
         let now = std::time::Instant::now();
-        rw.insert(display_path_string(&old), now);
-        rw.insert(display_path_string(&new), now);
+        rw.insert(old_key.clone(), now);
+        rw.insert(new_key.clone(), now);
     }
-    fs::rename(old, new).map_err(|e| e.to_string())
+    fs::rename(old, new).map_err(|e| e.to_string())?;
+    if let Ok(mut formats) = state.text_formats.lock() {
+        if let Some(format) = formats.remove(&old_key) {
+            formats.insert(new_key, format);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -214,10 +461,15 @@ fn delete_path(path: String, state: tauri::State<'_, WatcherState>) -> Result<()
     if !target.exists() {
         return Err("Target does not exist".to_string());
     }
+    let target_key = display_path_string(&target);
     if let Ok(mut rw) = state.recent_writes.lock() {
-        rw.insert(display_path_string(&target), std::time::Instant::now());
+        rw.insert(target_key.clone(), std::time::Instant::now());
     }
-    trash::delete(target).map_err(|e| e.to_string())
+    trash::delete(target).map_err(|e| e.to_string())?;
+    if let Ok(mut formats) = state.text_formats.lock() {
+        formats.remove(&target_key);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -386,6 +638,7 @@ pub fn run() {
             watchers: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             recent_writes: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             allowed_roots: std::sync::Arc::new(std::sync::Mutex::new(HashSet::new())),
+            text_formats: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
         .setup(|app| {
             if cfg!(debug_assertions) {

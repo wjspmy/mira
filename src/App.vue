@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick } from "vue";
-import { useEditor, EditorContent } from "@tiptap/vue-3";
+import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick, shallowRef, triggerRef } from "vue";
+import { Editor, EditorContent } from "@tiptap/vue-3";
+import type { Editor as CoreEditor } from "@tiptap/core";
 import { EditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
@@ -20,13 +21,15 @@ import { useWorkspaceStore, type FileNode } from "./stores/workspace";
 import { useSessionStore, type Doc } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
 import { useShortcutsStore } from "./stores/shortcuts";
-import type { ShortcutCommandId } from "./shortcuts/registry";
-import { shortcutFromEvent } from "./shortcuts/keyboard";
+import { SHORTCUT_COMMANDS, type ShortcutCommandId } from "./shortcuts/registry";
+import { displayShortcut, shortcutFromEvent } from "./shortcuts/keyboard";
+import type { AppMenuCommandId } from "./menus/appMenu";
 import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
 import ShortcutSettings from "./components/ShortcutSettings.vue";
+import AppMenuBar from "./components/AppMenuBar.vue";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog, ask, message as messageDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window";
 import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, replacePathPrefix } from "./utils/path";
@@ -101,7 +104,8 @@ function saveDraftForDoc(doc: Doc) {
     removeDraftForDoc(doc);
     return;
   }
-  const rawMd = doc.id === session.activeId && editor.value ? getMarkdown() : doc.rawMd;
+  const existingEditor = editorForDoc(doc.id);
+  const rawMd = existingEditor ? markdownFromEditor(existingEditor) : doc.rawMd;
   if (!rawMd.trim()) {
     removeDraftForDoc(doc);
     return;
@@ -186,55 +190,29 @@ const MiraCodeBlockLowlight = CodeBlockLowlight.extend({
     ];
   },
 });
-let loading = false; // Suppress onUpdate during programmatic editor state changes.
-let undoFloorMd = ""; // Fallback guard: prevent undo from crossing the current tab baseline.
+const loadingDocIds = new Set<string>(); // Suppress onUpdate during programmatic editor state changes.
+const editors = shallowRef(new Map<string, Editor>());
 
-const editor = useEditor({
-  extensions: [
-    StarterKit.configure({ codeBlock: false }),
-    MiraCodeBlockLowlight.configure({ lowlight }),
-    Table,
-    TableRow,
-    TableHeader,
-    TableCell,
-    TaskList,
-    TaskItem.configure({ nested: true }),
-    Link.configure({ openOnClick: false }),
-    MathInline,
-    MathBlock,
-    MiraImage,
-    Markdown.configure({ html: false, breaks: true }),
-  ],
-  content: "",
-  editorProps: {
-    handleKeyDown: (_view, event) => {
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
-        // setContent 会留下跨文档 history。当前内容已回到本标签加载基线时，禁止继续 undo 穿透到上一个标签。
-        if (getMarkdown() === undoFloorMd) {
-          event.preventDefault();
-          return true;
-        }
-      }
-      return false;
-    },
-  },
-  onUpdate: () => {
-    if (loading) return;
-    session.markActiveDirty(true);
-    if (session.activeDoc) saveDraftForDoc(session.activeDoc);
-    scheduleAutosave();
-  },
-});
-
-function getMarkdown(): string {
-  const doc = editor.value?.state.doc;
-  if (!doc) return "";
-  return serializeDocToMarkdown(doc);
+function editorForDoc(id: string | null = session.activeId): Editor | null {
+  return id ? editors.value.get(id) ?? null : null;
 }
 
-function resetCurrentHistory() {
-  const ed = editor.value;
-  if (!ed) return;
+const activeEditor = computed(() => {
+  // Depend on the shallow ref so triggerRef(editors) refreshes this when a new editor is created.
+  const map = editors.value;
+  return session.activeId ? map.get(session.activeId) ?? null : null;
+});
+
+function markdownFromEditor(ed: CoreEditor | null | undefined): string {
+  const doc = ed?.state.doc;
+  return doc ? serializeDocToMarkdown(doc) : "";
+}
+
+function getMarkdown(id: string | null = session.activeId): string {
+  return markdownFromEditor(editorForDoc(id));
+}
+
+function resetEditorHistory(ed: Editor) {
   const cleanState = EditorState.create({
     schema: ed.schema,
     doc: ed.state.doc,
@@ -243,29 +221,89 @@ function resetCurrentHistory() {
   ed.view.updateState(cleanState);
 }
 
-function loadIntoEditor(md: string) {
-  const ed = editor.value;
+function setEditorContent(id: string, md: string, resetHistory = true) {
+  const ed = editorForDoc(id);
   if (!ed) return;
-  loading = true;
+  loadingDocIds.add(id);
   try {
     ed.commands.setContent(md || "");
-    resetCurrentHistory();
-    undoFloorMd = getMarkdown();
+    if (resetHistory) resetEditorHistory(ed);
   } finally {
-    loading = false;
+    loadingDocIds.delete(id);
   }
 }
 
-function snapshotEditorDoc(id: string | null = session.activeId) {
-  if (!id || !editor.value) return;
-  const doc = session.docs.find((d) => d.id === id);
-  if (!doc) return;
-  doc.rawMd = getMarkdown();
+function createDocEditor(doc: Doc): Editor {
+  const ed = new Editor({
+    extensions: [
+      StarterKit.configure({ codeBlock: false }),
+      MiraCodeBlockLowlight.configure({ lowlight }),
+      Table,
+      TableRow,
+      TableHeader,
+      TableCell,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Link.configure({ openOnClick: false }),
+      MathInline,
+      MathBlock,
+      MiraImage,
+      Markdown.configure({ html: false, breaks: true }),
+    ],
+    content: doc.rawMd || "",
+    editorProps: {
+      handleKeyDown: () => false,
+    },
+    onUpdate: ({ editor: updatedEditor }) => {
+      if (loadingDocIds.has(doc.id)) return;
+      doc.rawMd = markdownFromEditor(updatedEditor);
+      doc.dirty = true;
+      saveDraftForDoc(doc);
+      scheduleAutosave();
+    },
+  });
+  ed.storage.miraDocDir = doc.filePath ? dirname(doc.filePath) || undefined : undefined;
+  resetEditorHistory(ed);
+  return ed;
 }
 
-function syncEditorDocDir(path: string | null | undefined) {
-  if (!editor.value) return;
-  editor.value.storage.miraDocDir = path ? dirname(path) || undefined : undefined;
+function ensureDocEditor(doc: Doc): Editor {
+  let ed = editors.value.get(doc.id);
+  if (!ed) {
+    ed = createDocEditor(doc);
+    editors.value.set(doc.id, ed);
+    triggerRef(editors);
+  }
+  return ed;
+}
+
+function destroyDocEditor(id: string) {
+  const ed = editors.value.get(id);
+  if (ed) ed.destroy();
+  if (editors.value.delete(id)) triggerRef(editors);
+}
+
+function loadIntoEditor(md: string, docId: string | null = session.activeId) {
+  if (!docId) return;
+  const doc = session.docs.find((d) => d.id === docId);
+  if (!doc) return;
+  ensureDocEditor(doc);
+  setEditorContent(docId, md, true);
+  doc.rawMd = getMarkdown(docId);
+}
+
+function snapshotEditorDoc(id: string | null = session.activeId) {
+  if (!id) return;
+  const doc = session.docs.find((d) => d.id === id);
+  if (!doc) return;
+  const ed = editorForDoc(id);
+  if (ed) doc.rawMd = markdownFromEditor(ed);
+}
+
+function syncEditorDocDir(path: string | null | undefined, docId: string | null = session.activeId) {
+  const ed = editorForDoc(docId);
+  if (!ed) return;
+  ed.storage.miraDocDir = path ? dirname(path) || undefined : undefined;
 }
 
 function persistSessionSoon() {
@@ -294,20 +332,31 @@ async function restoreDocScroll(id: string | null) {
 const activeDoc = computed(() => session.activeDoc);
 const filePath = computed(() => session.activeDoc?.filePath ?? null);
 const dirty = computed(() => session.activeDoc?.dirty ?? false);
+const hasActiveDoc = computed(() => !!session.activeDoc);
+const hasOpenTabs = computed(() => session.docs.length > 0);
+const currentPathLabel = computed(() => filePath.value ?? "未命名");
+const saveStateLabel = computed(() => dirty.value ? "● 未保存" : "已保存");
+const menuShortcutLabels = computed<Partial<Record<ShortcutCommandId, string>>>(() => {
+  const result: Partial<Record<ShortcutCommandId, string>> = {};
+  for (const command of SHORTCUT_COMMANDS) {
+    result[command.id] = displayShortcut(shortcuts.shortcutFor(command.id));
+  }
+  return result;
+});
 
 function uuid() {
   return (crypto as any).randomUUID?.() ?? String(Date.now()) + Math.random();
 }
 
-// 显式切换：先同步保存旧 doc 的 markdown，再 setActive，再加载目标 doc 的快照。
-// 每个 tab 持有独立 rawMd/scrollTop；loadIntoEditor() 会重建当前 EditorState，避免 undo/redo 跨标签串历史。
+// 显式切换：先同步保存旧 doc 的 markdown，再 setActive，并显示目标 doc 的独立 Editor 实例。
+// 每个 tab 持有独立 rawMd/scrollTop/Editor，避免 undo/redo 跨标签串历史，同时保留本 tab 的撤销栈。
 async function switchTo(newId: string | null) {
   const oldId = session.activeId;
   if (newId === oldId) return;
   if (timer) { clearTimeout(timer); timer = null; }
   // 保存 outgoing：序列化为 markdown 字符串（不可变）；已命名 dirty 文档切走前立即落盘，避免防抖保存被取消。
   saveDocScroll(oldId);
-  if (oldId && editor.value) {
+  if (oldId && editorForDoc(oldId)) {
     const old = session.docs.find((d) => d.id === oldId);
     if (old) {
       snapshotEditorDoc(oldId);
@@ -324,15 +373,13 @@ async function switchTo(newId: string | null) {
     }
   }
   session.setActive(newId);
-  // Restore from the target tab's own Markdown snapshot. This keeps same-name tabs isolated
-  // and clears history so undo cannot cross into the previous tab.
-  if (newId && editor.value) {
+  // 切换 tab 时不再 setContent/搬运 EditorState；只确保目标文档拥有自己的 Editor 实例。
+  if (newId) {
     const next = session.docs.find((d) => d.id === newId);
-    syncEditorDocDir(next?.filePath);
-    if (next) loadIntoEditor(next.rawMd || "");
-  } else if (editor.value) {
-    syncEditorDocDir(null);
-    loadIntoEditor("");
+    if (next) {
+      ensureDocEditor(next);
+      syncEditorDocDir(next.filePath, next.id);
+    }
   }
   await restoreDocScroll(newId);
   persistSessionSoon();
@@ -470,7 +517,7 @@ async function renameWorkspaceNode(node: FileNode) {
       const nextPath = replacePathPrefix(doc.filePath!, oldPath, newPath);
       doc.filePath = nextPath;
       changedPaths.push(nextPath);
-      if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
+      syncEditorDocDir(doc.filePath, doc.id);
     }
     const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
     if (affectedDocs.length || deduped) persistSessionSoon();
@@ -498,7 +545,7 @@ async function moveWorkspaceNode(node: FileNode) {
       const nextPath = replacePathPrefix(doc.filePath!, oldPath, newPath);
       doc.filePath = nextPath;
       changedPaths.push(nextPath);
-      if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
+      syncEditorDocDir(doc.filePath, doc.id);
     }
     const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
     if (affectedDocs.length || deduped) persistSessionSoon();
@@ -623,6 +670,7 @@ async function closeDoc(id: string) {
   const wasActive = session.activeId === id;
   const neighbor = wasActive ? session.docs[idx + 1] || session.docs[idx - 1] || null : null;
   if (doc) removeDraftForDoc(doc);
+  destroyDocEditor(id);
   session.removeDoc(id);
   if (wasActive) {
     await switchTo(neighbor ? neighbor.id : null);
@@ -808,6 +856,7 @@ async function dedupeOpenDocsForPaths(paths: string[]): Promise<boolean> {
     keeper.dirty = nextDirty;
     for (const doc of duplicates) {
       if (doc.id !== keeper.id) {
+        destroyDocEditor(doc.id);
         session.removeDoc(doc.id);
         changed = true;
       }
@@ -816,7 +865,7 @@ async function dedupeOpenDocsForPaths(paths: string[]): Promise<boolean> {
     if (duplicates.some((d) => d.id === activeBefore)) {
       session.setActive(keeper.id);
       syncEditorDocDir(keeper.filePath);
-      loadIntoEditor(keeper.rawMd || "");
+      loadIntoEditor(keeper.rawMd || "", keeper.id);
     }
   }
   return changed;
@@ -834,7 +883,7 @@ async function handleFsMoved(oldPath: string, newPath: string) {
     const nextPath = replacePathPrefix(doc.filePath!, oldPath, newPath);
     doc.filePath = nextPath;
     changedPaths.push(nextPath);
-    if (session.activeId === doc.id) syncEditorDocDir(doc.filePath);
+    syncEditorDocDir(doc.filePath, doc.id);
   }
 
   const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
@@ -855,7 +904,7 @@ async function handleFsChanged(path: string) {
       try {
         const text = await invoke<string>("read_text_file", { path });
         doc.rawMd = text;
-        loadIntoEditor(text);
+        loadIntoEditor(text, doc.id);
         status.value = "文件已被外部修改，已重新加载";
       } catch (err) {
         status.value = `重载失败：${err}`;
@@ -873,7 +922,7 @@ async function handleFsChanged(path: string) {
           try {
             const text = await invoke<string>("read_text_file", { path });
             doc.rawMd = text;
-            loadIntoEditor(text);
+            loadIntoEditor(text, doc.id);
             doc.dirty = false;
             status.value = `已重新加载 ${path}`;
           } catch (err) {
@@ -891,6 +940,7 @@ async function handleFsChanged(path: string) {
     if (!doc.dirty) {
       try {
         doc.rawMd = await invoke<string>("read_text_file", { path });
+        destroyDocEditor(doc.id);
       } catch {
         /* ignore */
       }
@@ -981,14 +1031,18 @@ async function switchTabAt(index: number) {
 }
 
 function runEditorCommand(command: string) {
-  const ed = editor.value as any;
+  const ed = activeEditor.value as any;
   const chain = ed?.chain?.().focus?.();
   if (!chain || typeof chain[command] !== "function") return;
   chain[command]().run();
 }
 
+function undoEditorSafely() {
+  runEditorCommand("undo");
+}
+
 function insertLink() {
-  const ed = editor.value as any;
+  const ed = activeEditor.value as any;
   if (!ed) return;
   const current = ed.getAttributes?.("link")?.href ?? "";
   const href = window.prompt("链接 URL（留空移除链接）", current);
@@ -1026,6 +1080,23 @@ async function executeShortcut(commandId: ShortcutCommandId) {
   };
 
   await handlers[commandId]?.();
+}
+
+async function executeMenuCommand(commandId: AppMenuCommandId) {
+  closeContextMenu();
+  if (commandId === "undo") {
+    undoEditorSafely();
+    return;
+  }
+  if (commandId === "redo") {
+    runEditorCommand("redo");
+    return;
+  }
+  if (commandId === "aboutMira") {
+    await messageDialog("Mira：本地优先的所见即所得 Markdown 编辑器。", { title: "关于 Mira", kind: "info" });
+    return;
+  }
+  await executeShortcut(commandId);
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -1120,38 +1191,25 @@ onBeforeUnmount(() => {
   if (unlistenFs) unlistenFs();
   if (unlistenMoved) unlistenMoved();
   if (unlistenWindowClose) unlistenWindowClose();
-  editor.value?.destroy();
+  for (const ed of editors.value.values()) ed.destroy();
+  editors.value.clear();
+  triggerRef(editors);
 });
 </script>
 
 <template>
   <div class="app">
-    <header class="toolbar">
-      <button @click="openFolder">打开文件夹</button>
-      <button @click="openFile()">打开</button>
-      <button @click="newDoc">新建</button>
-      <button @click="saveFile">保存</button>
-      <button class="theme-btn" @click="toggleTheme" :title="theme === 'light' ? '切换深色' : '切换浅色'">{{ theme === "light" ? "🌙" : "☀️" }}</button>
-      <button @click="openShortcutSettings">快捷键</button>
-      <span class="path">{{ filePath ?? "未命名" }}</span>
-      <span class="dot" :class="{ dirty }">{{ dirty ? "● 未保存" : "已保存" }}</span>
-    </header>
+    <AppMenuBar
+      :recent-paths="recent.recentPaths"
+      :shortcuts="menuShortcutLabels"
+      :has-active-doc="hasActiveDoc"
+      :has-open-tabs="hasOpenTabs"
+      @run-command="executeMenuCommand"
+      @open-recent="openFile"
+    />
     <Tabs v-if="session.docs.length" @close="closeDoc" @switch="switchTo" />
     <div class="body">
       <aside class="sidebar">
-        <section class="sidebar-section" v-if="recent.recentPaths.length">
-          <div class="sidebar-header">最近打开</div>
-          <div
-            v-for="p in recent.recentPaths"
-            :key="p"
-            class="tree-row recent-row"
-            :title="p"
-            @click="openFile(p)"
-          >
-            <span class="chevron">·</span>
-            <span class="name">{{ basename(p) }}</span>
-          </div>
-        </section>
         <section v-if="ws.rootPath">
           <div
             class="sidebar-header workspace-header"
@@ -1159,7 +1217,6 @@ onBeforeUnmount(() => {
             @contextmenu.prevent="openRootContextMenu($event)"
           >
             <span class="workspace-name">{{ ws.rootName }}</span>
-            <span class="workspace-hint">右键操作</span>
           </div>
           <div class="tree" @contextmenu.self.prevent="openRootContextMenu($event)">
             <FileTreeNode
@@ -1173,11 +1230,11 @@ onBeforeUnmount(() => {
             <div v-if="ws.childrenOf(ws.rootPath) === null" class="tree-loading">加载中…</div>
           </div>
         </section>
-        <div v-if="!ws.rootPath && !recent.recentPaths.length" class="empty-hint">
-          打开一个文件夹或文件开始
+        <div v-if="!ws.rootPath" class="empty-hint">
+          通过“文件”菜单打开文件夹或文件开始
         </div>
       </aside>
-      <EditorContent v-if="editor" :editor="editor" class="mira-editor editor" />
+      <EditorContent v-if="activeEditor" :key="session.activeId ?? 'empty'" :editor="activeEditor" class="mira-editor editor" />
     </div>
     <div
       v-if="contextMenu"
@@ -1197,6 +1254,9 @@ onBeforeUnmount(() => {
       <button @click="contextRefresh">刷新</button>
     </div>
     <ShortcutSettings v-if="showShortcutSettings" @close="showShortcutSettings = false" />
-    <footer class="status">{{ status }}</footer>
+    <footer class="status">
+      <span class="status-path" :title="currentPathLabel">{{ currentPathLabel }}</span>
+      <span class="status-save" :class="{ dirty }">{{ saveStateLabel }}</span>
+    </footer>
   </div>
 </template>

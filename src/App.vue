@@ -17,7 +17,7 @@ import { MathInline, MathBlock } from "./editor/math";
 import { serializeDocToMarkdown } from "./editor/serialize";
 import { MiraImage } from "./editor/image";
 import { useWorkspaceStore, type FileNode } from "./stores/workspace";
-import { useSessionStore } from "./stores/session";
+import { useSessionStore, type Doc } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
 import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
@@ -31,6 +31,98 @@ const session = useSessionStore();
 const recent = useRecentStore();
 const status = ref("就绪");
 let restoringSession = false;
+
+const DRAFTS_KEY = "mira-drafts";
+type DraftSnapshot = {
+  id: string;
+  filePath: string | null;
+  rawMd: string;
+  dirty: boolean;
+  scrollTop?: number;
+  savedAt: number;
+};
+
+function draftKeyForDoc(doc: Pick<Doc, "id" | "filePath">): string {
+  return doc.filePath ? "file:" + normPath(doc.filePath) : "untitled:" + doc.id;
+}
+
+function loadDraftMap(): Record<string, DraftSnapshot> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const drafts: Record<string, DraftSnapshot> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      const draft = value as Partial<DraftSnapshot>;
+      if (typeof draft.id !== "string" || typeof draft.rawMd !== "string") continue;
+      drafts[key] = {
+        id: draft.id,
+        filePath: typeof draft.filePath === "string" ? normalizeNativePath(draft.filePath) : null,
+        rawMd: draft.rawMd,
+        dirty: draft.dirty !== false,
+        scrollTop: typeof draft.scrollTop === "number" ? draft.scrollTop : undefined,
+        savedAt: typeof draft.savedAt === "number" ? draft.savedAt : 0,
+      };
+    }
+    return drafts;
+  } catch {
+    return {};
+  }
+}
+
+function persistDraftMap(drafts: Record<string, DraftSnapshot>) {
+  if (Object.keys(drafts).length) {
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+  } else {
+    localStorage.removeItem(DRAFTS_KEY);
+  }
+}
+
+function removeDraftForDoc(doc: Pick<Doc, "id" | "filePath">) {
+  const drafts = loadDraftMap();
+  const keys = new Set<string>([draftKeyForDoc(doc), "untitled:" + doc.id]);
+  const normalizedPath = doc.filePath ? normPath(doc.filePath) : null;
+  for (const [key, draft] of Object.entries(drafts)) {
+    if (draft.id === doc.id) keys.add(key);
+    if (normalizedPath && draft.filePath && normPath(draft.filePath) === normalizedPath) keys.add(key);
+  }
+  for (const key of keys) delete drafts[key];
+  persistDraftMap(drafts);
+}
+
+function saveDraftForDoc(doc: Doc) {
+  if (doc.filePath && !doc.dirty) {
+    removeDraftForDoc(doc);
+    return;
+  }
+  const rawMd = doc.id === session.activeId && editor.value ? getMarkdown() : doc.rawMd;
+  if (!rawMd.trim()) {
+    removeDraftForDoc(doc);
+    return;
+  }
+  const drafts = loadDraftMap();
+  drafts[draftKeyForDoc(doc)] = {
+    id: doc.id,
+    filePath: doc.filePath ? normalizeNativePath(doc.filePath) : null,
+    rawMd,
+    dirty: doc.dirty || !doc.filePath,
+    scrollTop: doc.scrollTop,
+    savedAt: Date.now(),
+  };
+  persistDraftMap(drafts);
+}
+
+function saveRecoverableDrafts() {
+  snapshotEditorDoc(session.activeId);
+  saveDocScroll(session.activeId);
+  for (const doc of session.docs) {
+    if (!doc.filePath || doc.dirty) saveDraftForDoc(doc);
+    else removeDraftForDoc(doc);
+  }
+}
+
+function pendingDrafts(): DraftSnapshot[] {
+  return Object.values(loadDraftMap()).sort((a, b) => b.savedAt - a.savedAt);
+}
 
 type ContextMenuState = {
   x: number;
@@ -112,6 +204,7 @@ const editor = useEditor({
   onUpdate: () => {
     if (loading) return;
     session.markActiveDirty(true);
+    if (session.activeDoc) saveDraftForDoc(session.activeDoc);
     scheduleAutosave();
   },
 });
@@ -239,6 +332,7 @@ async function switchTo(newId: string | null) {
         try {
           await invoke("write_text_file", { path: old.filePath, content: old.rawMd });
           old.dirty = false;
+          removeDraftForDoc(old);
           status.value = `已自动保存 ${old.filePath}`;
         } catch (e) {
           status.value = `自动保存失败：${e}`;
@@ -330,6 +424,7 @@ async function saveFile() {
     await invoke("write_text_file", { path, content: md });
     doc.rawMd = md;
     doc.dirty = false;
+    removeDraftForDoc(doc);
     persistSessionSoon();
     status.value = `已保存 ${path}`;
   } catch (e) {
@@ -440,6 +535,7 @@ async function deleteWorkspaceNode(node: FileNode) {
     const nextDoc = activeWillClose ? session.docs.find((d) => !affectedIds.has(d.id)) ?? null : null;
     await ws.deleteNode(node);
     for (const doc of affectedDocs) {
+      removeDraftForDoc(doc);
       session.removeDoc(doc.id);
     }
     recent.removeRecentUnder(node.path);
@@ -528,13 +624,14 @@ async function contextRefresh() {
 
 async function closeDoc(id: string) {
   const doc = session.docs.find((d) => d.id === id);
-  if (doc?.dirty && !(await ask("该文档有未保存修改，确认关闭？", { title: "Mira", kind: "warning" }))) {
+  if (doc && (doc.dirty || !doc.filePath) && !(await ask("该文档有未保存修改，确认关闭？", { title: "Mira", kind: "warning" }))) {
     return;
   }
   const idx = session.docs.findIndex((d) => d.id === id);
   if (idx < 0) return;
   const wasActive = session.activeId === id;
   const neighbor = wasActive ? session.docs[idx + 1] || session.docs[idx - 1] || null : null;
+  if (doc) removeDraftForDoc(doc);
   session.removeDoc(id);
   if (wasActive) {
     await switchTo(neighbor ? neighbor.id : null);
@@ -545,7 +642,7 @@ async function closeDoc(id: string) {
 
 // 防抖自动保存（仅对已命名文档）
 function dirtyDocs() {
-  return session.docs.filter((d) => d.dirty);
+  return session.docs.filter((d) => d.dirty || !d.filePath);
 }
 
 async function handleWindowCloseRequested(event: CloseRequestedEvent) {
@@ -569,6 +666,7 @@ async function handleWindowCloseRequested(event: CloseRequestedEvent) {
     clearTimeout(timer);
     timer = null;
   }
+  for (const doc of docs) removeDraftForDoc(doc);
   persistSessionSoon();
 
   try {
@@ -595,6 +693,7 @@ function scheduleAutosave() {
       await invoke("write_text_file", { path: doc.filePath!, content: md });
       doc.rawMd = md;
       doc.dirty = false;
+      removeDraftForDoc(doc);
       if (doc === session.activeDoc) status.value = `已自动保存 ${doc.filePath}`;
     } catch (e) {
       status.value = `自动保存失败：${e}`;
@@ -818,6 +917,56 @@ function onImageError(e: Event) {
   status.value = message || "图片插入失败";
 }
 
+
+async function restoreDrafts() {
+  const drafts = pendingDrafts();
+  if (!drafts.length) return;
+
+  const draftMap = loadDraftMap();
+  let restored = 0;
+  for (const draft of drafts) {
+    const title = draft.filePath ? basename(draft.filePath) : "未命名文档";
+    const savedAt = Number.isFinite(draft.savedAt) ? draft.savedAt : Date.now();
+    const ok = await ask("发现未恢复的草稿 \"" + title + "\"（" + new Date(savedAt).toLocaleString() + "），是否恢复？", {
+      title: "Mira",
+      kind: "warning",
+    });
+
+    const normalizedPath = draft.filePath ? normPath(draft.filePath) : null;
+    for (const [key, stored] of Object.entries(draftMap)) {
+      if (stored.id === draft.id) delete draftMap[key];
+      if (normalizedPath && stored.filePath && normPath(stored.filePath) === normalizedPath) delete draftMap[key];
+    }
+
+    if (!ok) continue;
+
+    const existing = draft.filePath ? session.findDocByPath(draft.filePath) : null;
+    if (existing) {
+      existing.rawMd = draft.rawMd;
+      existing.dirty = true;
+      existing.scrollTop = draft.scrollTop;
+      await switchTo(existing.id);
+    } else {
+      const id = uuid();
+      session.addDoc({
+        id,
+        filePath: draft.filePath,
+        rawMd: draft.rawMd,
+        dirty: true,
+        scrollTop: draft.scrollTop,
+      });
+      await switchTo(id);
+    }
+    restored++;
+  }
+
+  persistDraftMap(draftMap);
+  if (restored) {
+    persistSessionSoon();
+    status.value = "已恢复 " + restored + " 个草稿";
+  }
+}
+
 async function restoreLastSession() {
   const savedRoot = ws.savedRoot();
   if (savedRoot) {
@@ -880,9 +1029,11 @@ onMounted(async () => {
     }
   });
   await restoreLastSession();
+  await restoreDrafts();
 });
 
 onBeforeUnmount(() => {
+  if (!forceWindowClose) saveRecoverableDrafts();
   snapshotEditorDoc(session.activeId);
   saveDocScroll(session.activeId);
   window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);

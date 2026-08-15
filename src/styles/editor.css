@@ -304,3 +304,115 @@ body { background: var(--bg); color: var(--fg); }
   resize: vertical;
   outline: none;
 }
+
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.36);
+}
+.shortcut-modal {
+  width: min(880px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h2 { margin: 0 0 4px; font-size: 18px; }
+.modal-header p { margin: 0; color: var(--muted); font-size: 13px; }
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 18px;
+}
+.shortcut-message {
+  margin: 12px 20px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--muted);
+  font-size: 13px;
+}
+.shortcut-groups {
+  overflow: auto;
+  padding: 10px 20px 16px;
+}
+.shortcut-group { margin-top: 12px; }
+.shortcut-group h3 {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 160px auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.shortcut-command { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.shortcut-command strong { font-size: 13px; }
+.shortcut-command span { color: var(--muted); font-size: 12px; }
+.shortcut-row kbd {
+  justify-self: start;
+  min-width: 92px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--code-bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+}
+.shortcut-row kbd.capturing { color: #d97706; border-color: #d97706; }
+.shortcut-row button,
+.modal-actions button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.shortcut-row button:hover,
+.modal-actions button:hover,
+.icon-btn:hover { background: var(--code-bg); }
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+.modal-actions .primary {
+  background: var(--fg);
+  color: var(--bg);
+}
+@media (max-width: 720px) {
+  .shortcut-row { grid-template-columns: 1fr; align-items: stretch; }
+  .shortcut-row kbd { justify-self: stretch; }
+}

@@ -19,8 +19,12 @@ import { MiraImage } from "./editor/image";
 import { useWorkspaceStore, type FileNode } from "./stores/workspace";
 import { useSessionStore, type Doc } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
+import { useShortcutsStore } from "./stores/shortcuts";
+import type { ShortcutCommandId } from "./shortcuts/registry";
+import { shortcutFromEvent } from "./shortcuts/keyboard";
 import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
+import ShortcutSettings from "./components/ShortcutSettings.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -30,7 +34,9 @@ import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, re
 const ws = useWorkspaceStore();
 const session = useSessionStore();
 const recent = useRecentStore();
+const shortcuts = useShortcutsStore();
 const status = ref("就绪");
+const showShortcutSettings = ref(false);
 let restoringSession = false;
 
 const DRAFTS_KEY = "mira-drafts";
@@ -142,6 +148,16 @@ function applyTheme(t: string) {
 }
 function toggleTheme() {
   theme.value = theme.value === "light" ? "dark" : "light";
+}
+
+async function openFolder() {
+  const path = await ws.openFolder();
+  if (path) status.value = `已打开文件夹 ${path}`;
+}
+
+function openShortcutSettings() {
+  closeContextMenu();
+  showShortcutSettings.value = true;
 }
 watch(theme, (t) => {
   applyTheme(t);
@@ -326,6 +342,14 @@ function newDoc() {
   const id = uuid();
   session.addDoc({ id, filePath: null, rawMd: "# 新文档\n\n开始写作…", dirty: false });
   switchTo(id);
+}
+
+async function saveCurrentFile() {
+  if (!session.activeDoc) {
+    status.value = "没有可保存的文档";
+    return;
+  }
+  await saveFile();
 }
 
 async function openFile(path?: string) {
@@ -934,6 +958,89 @@ async function restoreDrafts() {
   }
 }
 
+
+async function closeActiveDoc() {
+  if (!session.activeId) {
+    status.value = "没有可关闭的标签页";
+    return;
+  }
+  await closeDoc(session.activeId);
+}
+
+async function switchTabByOffset(delta: number) {
+  if (!session.docs.length) return;
+  const current = session.docs.findIndex((doc) => doc.id === session.activeId);
+  const from = current >= 0 ? current : 0;
+  const next = (from + delta + session.docs.length) % session.docs.length;
+  await switchTo(session.docs[next].id);
+}
+
+async function switchTabAt(index: number) {
+  const doc = session.docs[index];
+  if (doc) await switchTo(doc.id);
+}
+
+function runEditorCommand(command: string) {
+  const ed = editor.value as any;
+  const chain = ed?.chain?.().focus?.();
+  if (!chain || typeof chain[command] !== "function") return;
+  chain[command]().run();
+}
+
+function insertLink() {
+  const ed = editor.value as any;
+  if (!ed) return;
+  const current = ed.getAttributes?.("link")?.href ?? "";
+  const href = window.prompt("链接 URL（留空移除链接）", current);
+  if (href === null) return;
+  const chain = ed.chain().focus().extendMarkRange("link");
+  if (href.trim()) chain.setLink({ href: href.trim() }).run();
+  else chain.unsetLink().run();
+}
+
+async function executeShortcut(commandId: ShortcutCommandId) {
+  const tabIndex = commandId.match(/^tab([1-9])$/)?.[1];
+  if (tabIndex) {
+    await switchTabAt(Number(tabIndex) - 1);
+    return;
+  }
+
+  const handlers: Partial<Record<ShortcutCommandId, () => void | Promise<void>>> = {
+    newDoc,
+    openFile: () => openFile(),
+    openFolder,
+    saveFile: saveCurrentFile,
+    closeTab: closeActiveDoc,
+    nextTab: () => switchTabByOffset(1),
+    prevTab: () => switchTabByOffset(-1),
+    toggleBold: () => runEditorCommand("toggleBold"),
+    toggleItalic: () => runEditorCommand("toggleItalic"),
+    toggleInlineCode: () => runEditorCommand("toggleCode"),
+    insertLink,
+    toggleBulletList: () => runEditorCommand("toggleBulletList"),
+    toggleOrderedList: () => runEditorCommand("toggleOrderedList"),
+    toggleBlockquote: () => runEditorCommand("toggleBlockquote"),
+    toggleCodeBlock: () => runEditorCommand("toggleCodeBlock"),
+    toggleTheme,
+    openShortcutSettings,
+  };
+
+  await handlers[commandId]?.();
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (showShortcutSettings.value) {
+    if (event.key === "Escape") showShortcutSettings.value = false;
+    return;
+  }
+  const shortcut = shortcutFromEvent(event);
+  const commandId = shortcuts.commandForShortcut(shortcut);
+  if (!commandId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void executeShortcut(commandId);
+}
+
 async function restoreLastSession() {
   const savedRoot = ws.savedRoot();
   if (savedRoot) {
@@ -971,6 +1078,7 @@ onMounted(async () => {
   window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.addEventListener("mira:image-error", onImageError as EventListener);
   window.addEventListener("click", closeContextMenu);
+  window.addEventListener("keydown", handleGlobalKeydown, true);
   unlistenWindowClose = await getCurrentWindow().onCloseRequested(handleWindowCloseRequested);
   // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
   unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
@@ -1006,6 +1114,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.removeEventListener("mira:image-error", onImageError as EventListener);
   window.removeEventListener("click", closeContextMenu);
+  window.removeEventListener("keydown", handleGlobalKeydown, true);
   if (timer) clearTimeout(timer);
   clearAllPendingMovePaths();
   if (unlistenFs) unlistenFs();
@@ -1018,11 +1127,12 @@ onBeforeUnmount(() => {
 <template>
   <div class="app">
     <header class="toolbar">
-      <button @click="ws.openFolder()">打开文件夹</button>
+      <button @click="openFolder">打开文件夹</button>
       <button @click="openFile()">打开</button>
       <button @click="newDoc">新建</button>
       <button @click="saveFile">保存</button>
       <button class="theme-btn" @click="toggleTheme" :title="theme === 'light' ? '切换深色' : '切换浅色'">{{ theme === "light" ? "🌙" : "☀️" }}</button>
+      <button @click="openShortcutSettings">快捷键</button>
       <span class="path">{{ filePath ?? "未命名" }}</span>
       <span class="dot" :class="{ dirty }">{{ dirty ? "● 未保存" : "已保存" }}</span>
     </header>
@@ -1086,6 +1196,7 @@ onBeforeUnmount(() => {
       <div class="context-separator"></div>
       <button @click="contextRefresh">刷新</button>
     </div>
+    <ShortcutSettings v-if="showShortcutSettings" @close="showShortcutSettings = false" />
     <footer class="status">{{ status }}</footer>
   </div>
 </template>

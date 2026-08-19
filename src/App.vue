@@ -27,6 +27,7 @@ import type { AppMenuCommandId } from "./menus/appMenu";
 import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
 import ShortcutSettings from "./components/ShortcutSettings.vue";
+import CommandPalette from "./components/CommandPalette.vue";
 import AppMenuBar from "./components/AppMenuBar.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask, message as messageDialog } from "@tauri-apps/plugin-dialog";
@@ -40,6 +41,13 @@ const recent = useRecentStore();
 const shortcuts = useShortcutsStore();
 const status = ref("就绪");
 const showShortcutSettings = ref(false);
+const showCommandPalette = ref(false);
+const paletteWorkspacePaths = ref<string[]>([]);
+const paletteLoading = ref(false);
+const paletteError = ref("");
+let paletteIndexRequest = 0;
+let paletteIndexTimer: number | null = null;
+let paletteIndexedRoot: string | null = null;
 let restoringSession = false;
 
 const DRAFTS_KEY = "mira-drafts";
@@ -162,6 +170,78 @@ async function openFolder() {
 function openShortcutSettings() {
   closeContextMenu();
   showShortcutSettings.value = true;
+}
+
+function clearPaletteIndexTimer() {
+  if (paletteIndexTimer !== null) {
+    window.clearTimeout(paletteIndexTimer);
+    paletteIndexTimer = null;
+  }
+}
+
+function closeCommandPalette() {
+  showCommandPalette.value = false;
+  clearPaletteIndexTimer();
+}
+
+async function indexPaletteWorkspace(root: string, requestId: number) {
+  paletteLoading.value = true;
+  try {
+    const paths = await ws.listSearchableFiles();
+    if (requestId === paletteIndexRequest && ws.rootPath === root) {
+      paletteWorkspacePaths.value = paths;
+      paletteIndexedRoot = root;
+    }
+  } catch (error) {
+    if (requestId === paletteIndexRequest) {
+      console.error("workspace file index failed", error);
+      paletteError.value = "工作区文件索引失败，请稍后重试。";
+    }
+  } finally {
+    if (requestId === paletteIndexRequest) {
+      paletteLoading.value = false;
+    }
+  }
+}
+
+function schedulePaletteWorkspaceIndex(query: string) {
+  clearPaletteIndexTimer();
+  const root = ws.rootPath;
+  const needle = query.trim();
+  if (!showCommandPalette.value || !root || needle.length < 2 || paletteLoading.value || paletteIndexedRoot === root) return;
+
+  const requestId = ++paletteIndexRequest;
+  paletteIndexTimer = window.setTimeout(() => {
+    paletteIndexTimer = null;
+    void indexPaletteWorkspace(root, requestId);
+  }, 280);
+}
+
+async function openCommandPalette() {
+  closeContextMenu();
+  showCommandPalette.value = true;
+  paletteError.value = "";
+
+  if (paletteIndexedRoot !== ws.rootPath) {
+    paletteWorkspacePaths.value = [];
+    paletteIndexedRoot = null;
+    paletteLoading.value = false;
+    ++paletteIndexRequest;
+  }
+}
+
+async function runPaletteCommand(commandId: ShortcutCommandId) {
+  closeCommandPalette();
+  await executeShortcut(commandId);
+}
+
+async function openPaletteFile(path: string) {
+  closeCommandPalette();
+  await openFile(path);
+}
+
+function handlePaletteQueryChange(query: string) {
+  schedulePaletteWorkspaceIndex(query);
 }
 watch(theme, (t) => {
   applyTheme(t);
@@ -1077,6 +1157,7 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     toggleCodeBlock: () => runEditorCommand("toggleCodeBlock"),
     toggleTheme,
     openShortcutSettings,
+    openCommandPalette,
   };
 
   await handlers[commandId]?.();
@@ -1102,6 +1183,10 @@ async function executeMenuCommand(commandId: AppMenuCommandId) {
 function handleGlobalKeydown(event: KeyboardEvent) {
   if (showShortcutSettings.value) {
     if (event.key === "Escape") showShortcutSettings.value = false;
+    return;
+  }
+  if (showCommandPalette.value) {
+    if (event.key === "Escape") closeCommandPalette();
     return;
   }
   const shortcut = shortcutFromEvent(event);
@@ -1188,6 +1273,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleGlobalKeydown, true);
   if (timer) clearTimeout(timer);
   clearAllPendingMovePaths();
+  clearPaletteIndexTimer();
   if (unlistenFs) unlistenFs();
   if (unlistenMoved) unlistenMoved();
   if (unlistenWindowClose) unlistenWindowClose();
@@ -1254,6 +1340,19 @@ onBeforeUnmount(() => {
       <button @click="contextRefresh">刷新</button>
     </div>
     <ShortcutSettings v-if="showShortcutSettings" @close="showShortcutSettings = false" />
+    <CommandPalette
+      v-if="showCommandPalette"
+      :shortcuts="menuShortcutLabels"
+      :open-paths="session.docs.flatMap((doc) => doc.filePath ? [doc.filePath] : [])"
+      :recent-paths="recent.recentPaths"
+      :workspace-paths="paletteWorkspacePaths"
+      :loading="paletteLoading"
+      :error="paletteError"
+      @close="closeCommandPalette"
+      @run-command="runPaletteCommand"
+      @open-file="openPaletteFile"
+      @query-change="handlePaletteQueryChange"
+    />
     <footer class="status">
       <span class="status-path" :title="currentPathLabel">{{ currentPathLabel }}</span>
       <span class="status-save" :class="{ dirty }">{{ saveStateLabel }}</span>

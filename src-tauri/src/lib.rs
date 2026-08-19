@@ -391,6 +391,95 @@ fn list_dir(path: String, ignore: Vec<String>, state: tauri::State<'_, WatcherSt
     Ok(v)
 }
 
+
+const SEARCH_IGNORED_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", ".vite"];
+const SEARCH_FILE_EXTENSIONS: &[&str] = &["md", "markdown", "mdx", "txt"];
+
+fn is_hidden_workspace_entry(path: &Path, name: &str) -> bool {
+    if name.is_empty() || name.starts_with('.') {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        return fs::symlink_metadata(path)
+            .map(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn is_searchable_workspace_entry(path: &Path, is_dir: bool) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    if is_hidden_workspace_entry(path, name) {
+        return false;
+    }
+    if is_dir {
+        return !SEARCH_IGNORED_DIRS.iter().any(|ignored| *ignored == name);
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| SEARCH_FILE_EXTENSIONS.iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)))
+        .unwrap_or(false)
+}
+
+fn collect_workspace_files(dir: &Path, results: &mut Vec<String>, limit: usize) -> Result<(), String> {
+    if results.len() >= limit {
+        return Ok(());
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        if results.len() >= limit {
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => continue,
+        };
+        // Never follow symlinks while scanning a workspace: a symlink can escape the allowed root.
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            if is_searchable_workspace_entry(&path, true) {
+                collect_workspace_files(&path, results, limit)?;
+            }
+        } else if file_type.is_file() && is_searchable_workspace_entry(&path, false) {
+            results.push(display_path_string(&path));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn list_workspace_files(root: String, max_results: usize, state: tauri::State<'_, WatcherState>) -> Result<Vec<String>, String> {
+    let root = ensure_existing_allowed(Path::new(&root), &state)?;
+    if !root.is_dir() {
+        return Err("Workspace root must be a directory".to_string());
+    }
+    let limit = max_results.clamp(1, 2000);
+    let mut results = Vec::new();
+    collect_workspace_files(&root, &mut results, limit)?;
+    results.sort_by_key(|path| path.to_lowercase());
+    Ok(results)
+}
+
 #[tauri::command]
 fn create_text_file(path: String, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
     let target = ensure_parent_target_allowed(Path::new(&path), &state)?;
@@ -655,6 +744,7 @@ pub fn run() {
             read_text_file,
             write_text_file,
             list_dir,
+            list_workspace_files,
             create_text_file,
             create_dir,
             rename_path,

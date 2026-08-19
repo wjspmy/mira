@@ -269,6 +269,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (dir) await refreshDir(dir, false);
   }
 
+  async function listSearchableFiles(maxResults = 2000): Promise<string[]> {
+    if (!rootPath.value) return [];
+    return invoke<string[]>("list_workspace_files", {
+      root: rootPath.value,
+      maxResults,
+    });
+  }
+
   async function openFolder() {
     const selected = await openDialog({ directory: true, multiple: false });
     if (!selected) return;
@@ -287,5 +295,5 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.removeItem(WORKSPACE_ROOT_KEY);
   }
 
-  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, syncExternalMove, createFile, createFolder, createFileInRoot, createFolderInRoot, moveNodeToDir, renameNode, deleteNode, toggle, isExpanded, childrenOf, openFolder, savedRoot, clearSavedRoot };
+  return { rootPath, rootName, expanded, setRoot, loadDir, refreshDir, refreshForPath, syncExternalMove, createFile, createFolder, createFileInRoot, createFolderInRoot, moveNodeToDir, renameNode, deleteNode, toggle, isExpanded, childrenOf, listSearchableFiles, openFolder, savedRoot, clearSavedRoot };
 });

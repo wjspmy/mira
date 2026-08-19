@@ -95,7 +95,8 @@ export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
       id: "tools",
       label: "工具",
       items: [
-        { id: "openShortcutSettings", label: "快捷键设置", shortcut: shortcut(shortcuts, "openShortcutSettings") },
+        { id: "openCommandPalette", label: "命令面板", shortcut: shortcut(shortcuts, "openCommandPalette") },
+        { id: "openShortcutSettings", label: "快捷键设置", shortcut: shortcut(shortcuts, "openShortcutSettings"), separatorBefore: true },
       ],
     },
     {

@@ -26,6 +26,7 @@ export type ShortcutCommandId =
   | "toggleBlockquote"
   | "toggleCodeBlock"
   | "toggleTheme"
+  | "toggleSourceMode"
   | "openShortcutSettings"
   | "openCommandPalette";
 
@@ -70,6 +71,7 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "toggleBlockquote", title: "切换引用", group: "edit", defaultShortcut: null },
   { id: "toggleCodeBlock", title: "切换代码块", group: "edit", defaultShortcut: null },
   { id: "toggleTheme", title: "切换浅色/深色主题", group: "app", defaultShortcut: "Mod+Shift+L" },
+  { id: "toggleSourceMode", title: "切换源码模式", group: "app", defaultShortcut: "Mod+Shift+M" },
   { id: "openShortcutSettings", title: "打开快捷键设置", group: "app", defaultShortcut: "Mod+," },
   { id: "openCommandPalette", title: "打开命令面板", group: "app", defaultShortcut: "Mod+Shift+P" },
 ];

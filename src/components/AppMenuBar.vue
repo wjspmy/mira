@@ -8,6 +8,7 @@ const props = defineProps<{
   shortcuts: Partial<Record<ShortcutCommandId, string>>;
   hasActiveDoc: boolean;
   hasOpenTabs: boolean;
+  editorMode?: "visual" | "source";
 }>();
 
 const emit = defineEmits<{
@@ -83,7 +84,7 @@ onBeforeUnmount(() => {
             v-else
             type="button"
             class="app-menu-item"
-            :class="{ danger: item.danger, inset: item.inset }"
+            :class="{ danger: item.danger, inset: item.inset, active: item.active }"
             :disabled="item.disabled"
             :title="item.title"
             role="menuitem"

@@ -1,5 +1,6 @@
 import type { ShortcutCommandId } from "../shortcuts/registry";
 import { basename } from "../utils/path";
+import type { EditorMode } from "../stores/editor-mode";
 
 export type AppMenuCommandId = ShortcutCommandId | "undo" | "redo" | "aboutMira";
 
@@ -14,6 +15,7 @@ export interface AppMenuItem {
   recentPath?: string;
   title?: string;
   inset?: boolean;
+  active?: boolean;
 }
 
 export interface AppMenuGroup {
@@ -27,6 +29,7 @@ export interface AppMenuState {
   shortcuts: Partial<Record<ShortcutCommandId, string>>;
   hasActiveDoc: boolean;
   hasOpenTabs: boolean;
+  editorMode?: EditorMode;
 }
 
 function shortcut(shortcuts: AppMenuState["shortcuts"], id: ShortcutCommandId) {
@@ -48,6 +51,7 @@ function recentItems(recentPaths: string[]): AppMenuItem[] {
 
 export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
   const { recentPaths, shortcuts, hasActiveDoc, hasOpenTabs } = state;
+  const editorMode = state.editorMode ?? "visual";
   return [
     {
       id: "file",
@@ -88,6 +92,7 @@ export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
       id: "view",
       label: "视图",
       items: [
+        { id: "toggleSourceMode", label: editorMode === "source" ? "切换到所见即所得" : "切换到源码模式", shortcut: shortcut(shortcuts, "toggleSourceMode"), active: editorMode === "source" },
         { id: "toggleTheme", label: "切换浅色/深色主题", shortcut: shortcut(shortcuts, "toggleTheme") },
       ],
     },

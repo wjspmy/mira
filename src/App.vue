@@ -21,6 +21,7 @@ import { useWorkspaceStore, type FileNode } from "./stores/workspace";
 import { useSessionStore, type Doc } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
 import { useShortcutsStore } from "./stores/shortcuts";
+import { useEditorModeStore } from "./stores/editor-mode";
 import { SHORTCUT_COMMANDS, type ShortcutCommandId } from "./shortcuts/registry";
 import { displayShortcut, shortcutFromEvent } from "./shortcuts/keyboard";
 import type { AppMenuCommandId } from "./menus/appMenu";
@@ -39,6 +40,7 @@ const ws = useWorkspaceStore();
 const session = useSessionStore();
 const recent = useRecentStore();
 const shortcuts = useShortcutsStore();
+const editorMode = useEditorModeStore();
 const status = ref("就绪");
 const showShortcutSettings = ref(false);
 const showCommandPalette = ref(false);
@@ -160,6 +162,13 @@ function applyTheme(t: string) {
 }
 function toggleTheme() {
   theme.value = theme.value === "light" ? "dark" : "light";
+}
+
+function toggleSourceMode() {
+  const next = editorMode.toggleMode();
+  status.value = next === "source"
+    ? "已切换到源码模式（源码编辑器将在下一步接入）"
+    : "已切换到所见即所得模式";
 }
 
 async function openFolder() {
@@ -1156,6 +1165,7 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     toggleBlockquote: () => runEditorCommand("toggleBlockquote"),
     toggleCodeBlock: () => runEditorCommand("toggleCodeBlock"),
     toggleTheme,
+    toggleSourceMode,
     openShortcutSettings,
     openCommandPalette,
   };
@@ -1290,6 +1300,7 @@ onBeforeUnmount(() => {
       :shortcuts="menuShortcutLabels"
       :has-active-doc="hasActiveDoc"
       :has-open-tabs="hasOpenTabs"
+      :editor-mode="editorMode.mode"
       @run-command="executeMenuCommand"
       @open-recent="openFile"
     />

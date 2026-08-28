@@ -157,7 +157,7 @@ git commit -m "feat: add custom css support"
 ## Implementation Status
 
 - [x] Task 1 implemented: persisted editor-mode state, configurable toggle shortcut, and View menu entry.
-- [ ] Task 1 user manual testing.
-- [ ] Task 2: CodeMirror source editor.
+- [x] Task 1 user manual testing.
+- [x] Task 2: CodeMirror source editor — committed scope accepted with known follow-up: 源码切回所见即所得后的光标/选区恢复仍待后续修复。
 - [ ] Task 3: Custom CSS loading and persistence.
 - [ ] Task 4: Documentation and final regression.

@@ -29,6 +29,7 @@ import FileTreeNode from "./components/FileTree.vue";
 import Tabs from "./components/Tabs.vue";
 import ShortcutSettings from "./components/ShortcutSettings.vue";
 import CommandPalette from "./components/CommandPalette.vue";
+import SourceEditor from "./components/SourceEditor.vue";
 import AppMenuBar from "./components/AppMenuBar.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask, message as messageDialog } from "@tauri-apps/plugin-dialog";
@@ -44,6 +45,7 @@ const editorMode = useEditorModeStore();
 const status = ref("就绪");
 const showShortcutSettings = ref(false);
 const showCommandPalette = ref(false);
+const sourceEditorRef = ref<InstanceType<typeof SourceEditor> | null>(null);
 const paletteWorkspacePaths = ref<string[]>([]);
 const paletteLoading = ref(false);
 const paletteError = ref("");
@@ -109,13 +111,17 @@ function removeDraftForDoc(doc: Pick<Doc, "id" | "filePath">) {
   persistDraftMap(drafts);
 }
 
+function currentMarkdownForDoc(doc: Doc): string {
+  if (editorMode.mode === "source" && doc.id === session.activeId) return doc.rawMd;
+  return markdownFromEditor(editorForDoc(doc.id)) || doc.rawMd;
+}
+
 function saveDraftForDoc(doc: Doc) {
   if (doc.filePath && !doc.dirty) {
     removeDraftForDoc(doc);
     return;
   }
-  const existingEditor = editorForDoc(doc.id);
-  const rawMd = existingEditor ? markdownFromEditor(existingEditor) : doc.rawMd;
+  const rawMd = currentMarkdownForDoc(doc);
   if (!rawMd.trim()) {
     removeDraftForDoc(doc);
     return;
@@ -164,11 +170,36 @@ function toggleTheme() {
   theme.value = theme.value === "light" ? "dark" : "light";
 }
 
-function toggleSourceMode() {
+function focusVisualEditor() {
+  const ed = activeEditor.value as any;
+  const chain = ed?.chain?.().focus?.("end");
+  if (chain?.run) chain.run();
+}
+
+async function toggleSourceMode() {
+  if (editorMode.mode === "visual") {
+    snapshotEditorDoc();
+  } else if (session.activeDoc) {
+    const visualMarkdown = markdownFromEditor(editorForDoc(session.activeDoc.id));
+    if (visualMarkdown !== session.activeDoc.rawMd) {
+      // 把源码模式的整次编辑作为一个历史节点同步回 Tiptap，保留此前的撤销栈。
+      setEditorContent(session.activeDoc.id, session.activeDoc.rawMd, false);
+    }
+  }
   const next = editorMode.toggleMode();
-  status.value = next === "source"
-    ? "已切换到源码模式（源码编辑器将在下一步接入）"
-    : "已切换到所见即所得模式";
+  await nextTick();
+  if (next === "source") sourceEditorRef.value?.focus();
+  else focusVisualEditor();
+  status.value = next === "source" ? "已切换到源码模式" : "已切换到所见即所得模式";
+}
+
+function onSourceUpdate(value: string) {
+  const doc = session.activeDoc;
+  if (!doc || doc.rawMd === value) return;
+  doc.rawMd = value;
+  doc.dirty = true;
+  saveDraftForDoc(doc);
+  scheduleAutosave();
 }
 
 async function openFolder() {
@@ -298,7 +329,9 @@ function markdownFromEditor(ed: CoreEditor | null | undefined): string {
 }
 
 function getMarkdown(id: string | null = session.activeId): string {
-  return markdownFromEditor(editorForDoc(id));
+  const doc = id ? session.docs.find((item) => item.id === id) : null;
+  if (doc && editorMode.mode === "source" && id === session.activeId) return doc.rawMd;
+  return markdownFromEditor(editorForDoc(id)) || doc?.rawMd || "";
 }
 
 function resetEditorHistory(ed: Editor) {
@@ -385,6 +418,7 @@ function snapshotEditorDoc(id: string | null = session.activeId) {
   if (!id) return;
   const doc = session.docs.find((d) => d.id === id);
   if (!doc) return;
+  if (editorMode.mode === "source" && id === session.activeId) return;
   const ed = editorForDoc(id);
   if (ed) doc.rawMd = markdownFromEditor(ed);
 }
@@ -817,7 +851,7 @@ function scheduleAutosave() {
   if (timer) clearTimeout(timer);
   timer = setTimeout(async () => {
     try {
-      const md = doc === session.activeDoc ? getMarkdown() : doc.rawMd;
+      const md = doc === session.activeDoc ? getMarkdown() : currentMarkdownForDoc(doc);
       await invoke("write_text_file", { path: doc.filePath!, content: md });
       doc.rawMd = md;
       doc.dirty = false;
@@ -1119,15 +1153,42 @@ async function switchTabAt(index: number) {
   if (doc) await switchTo(doc.id);
 }
 
-function runEditorCommand(command: string) {
+function syncSourceFromVisualHistory(ed: CoreEditor | null | undefined) {
+  if (editorMode.mode !== "source" || !session.activeDoc || !ed) return;
+  session.activeDoc.rawMd = markdownFromEditor(ed);
+  session.activeDoc.dirty = true;
+  saveDraftForDoc(session.activeDoc);
+  scheduleAutosave();
+  void nextTick(() => sourceEditorRef.value?.focus());
+}
+
+function runEditorCommand(command: string, options: { focus?: boolean; syncSource?: boolean } = {}) {
   const ed = activeEditor.value as any;
-  const chain = ed?.chain?.().focus?.();
-  if (!chain || typeof chain[command] !== "function") return;
-  chain[command]().run();
+  let chain = ed?.chain?.();
+  if (!chain) return false;
+  if (options.focus !== false && typeof chain.focus === "function") chain = chain.focus();
+  if (typeof chain[command] !== "function") return false;
+  const didRun = Boolean(chain[command]().run());
+  if (didRun && options.syncSource) syncSourceFromVisualHistory(ed);
+  return didRun;
+}
+
+function undoVisualEditorHistory() {
+  return runEditorCommand("undo", { focus: false, syncSource: true });
+}
+
+function redoVisualEditorHistory() {
+  return runEditorCommand("redo", { focus: false, syncSource: true });
 }
 
 function undoEditorSafely() {
-  runEditorCommand("undo");
+  if (editorMode.mode === "source" && sourceEditorRef.value?.undo()) return;
+  undoVisualEditorHistory();
+}
+
+function redoEditorSafely() {
+  if (editorMode.mode === "source" && sourceEditorRef.value?.redo()) return;
+  redoVisualEditorHistory();
 }
 
 function insertLink() {
@@ -1156,14 +1217,14 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     closeTab: closeActiveDoc,
     nextTab: () => switchTabByOffset(1),
     prevTab: () => switchTabByOffset(-1),
-    toggleBold: () => runEditorCommand("toggleBold"),
-    toggleItalic: () => runEditorCommand("toggleItalic"),
-    toggleInlineCode: () => runEditorCommand("toggleCode"),
+    toggleBold: () => { runEditorCommand("toggleBold"); },
+    toggleItalic: () => { runEditorCommand("toggleItalic"); },
+    toggleInlineCode: () => { runEditorCommand("toggleCode"); },
     insertLink,
-    toggleBulletList: () => runEditorCommand("toggleBulletList"),
-    toggleOrderedList: () => runEditorCommand("toggleOrderedList"),
-    toggleBlockquote: () => runEditorCommand("toggleBlockquote"),
-    toggleCodeBlock: () => runEditorCommand("toggleCodeBlock"),
+    toggleBulletList: () => { runEditorCommand("toggleBulletList"); },
+    toggleOrderedList: () => { runEditorCommand("toggleOrderedList"); },
+    toggleBlockquote: () => { runEditorCommand("toggleBlockquote"); },
+    toggleCodeBlock: () => { runEditorCommand("toggleCodeBlock"); },
     toggleTheme,
     toggleSourceMode,
     openShortcutSettings,
@@ -1180,7 +1241,7 @@ async function executeMenuCommand(commandId: AppMenuCommandId) {
     return;
   }
   if (commandId === "redo") {
-    runEditorCommand("redo");
+    redoEditorSafely();
     return;
   }
   if (commandId === "aboutMira") {
@@ -1331,7 +1392,23 @@ onBeforeUnmount(() => {
           通过“文件”菜单打开文件夹或文件开始
         </div>
       </aside>
-      <EditorContent v-if="activeEditor" :key="session.activeId ?? 'empty'" :editor="activeEditor" class="mira-editor editor" />
+      <SourceEditor
+        ref="sourceEditorRef"
+        v-if="editorMode.mode === 'source' && activeDoc"
+        @undo-fallback="undoVisualEditorHistory"
+        @redo-fallback="redoVisualEditorHistory"
+        :key="`source-${session.activeId ?? 'empty'}`"
+        :doc-id="activeDoc.id"
+        :model-value="activeDoc.rawMd"
+        class="mira-editor editor source-editor-shell"
+        @update:model-value="onSourceUpdate"
+      />
+      <EditorContent
+        v-else-if="activeEditor"
+        :key="session.activeId ?? 'empty'"
+        :editor="activeEditor"
+        class="mira-editor editor"
+      />
     </div>
     <div
       v-if="contextMenu"

@@ -590,3 +590,47 @@ body { background: var(--bg); color: var(--fg); }
   .command-palette-footer { gap: 8px; overflow-x: auto; }
   .command-palette-footer span:last-child { display: none; }
 }
+
+
+.source-editor-shell {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+.source-editor {
+  height: 100%;
+  overflow: auto;
+  color: var(--fg);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.source-editor .cm-editor {
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+}
+.source-editor .cm-scroller {
+  min-height: 100%;
+  padding: 18px 24px 36px;
+  font-family: var(--font-mono);
+  line-height: 1.65;
+}
+.source-editor .cm-gutters {
+  border: 0;
+  background: var(--bg);
+  color: var(--muted);
+}
+.source-editor .cm-activeLine,
+.source-editor .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--code-bg) 70%, transparent);
+}
+.source-editor .cm-content {
+  caret-color: var(--fg);
+}
+.source-editor .cm-focused {
+  outline: none;
+}
+.app-menu-item.active {
+  background: var(--code-bg);
+}

@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { storeToRefs } from "pinia";
 import { SHORTCUT_COMMANDS, SHORTCUT_COMMAND_BY_ID, SHORTCUT_GROUP_LABELS, type ShortcutCommand, type ShortcutCommandId, type ShortcutGroup } from "../shortcuts/registry";
 import { displayShortcut, shortcutFromEvent } from "../shortcuts/keyboard";
 import { useShortcutsStore } from "../stores/shortcuts";
+import { useSettingsStore } from "../stores/settings";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const shortcuts = useShortcutsStore();
+const settings = useSettingsStore();
 const { bindings } = storeToRefs(shortcuts);
+const { customCssPath } = storeToRefs(settings);
 const capturing = ref<ShortcutCommandId | null>(null);
 const message = ref("");
 
@@ -66,6 +70,32 @@ function resetAll() {
   message.value = "已恢复全部默认快捷键";
 }
 
+async function chooseCustomCss() {
+  const selected = await openDialog({
+    multiple: false,
+    filters: [{ name: "CSS", extensions: ["css"] }],
+  });
+  if (!selected) return;
+  const path = typeof selected === "string" ? selected : (selected as any).path;
+  if (!path) return;
+  settings.setCustomCssPath(path);
+  message.value = "已选择自定义 CSS，正在应用";
+}
+
+function clearCustomCssSetting() {
+  settings.clearCustomCssPath();
+  message.value = "已清除自定义 CSS";
+}
+
+function reloadCustomCssSetting() {
+  if (!customCssPath.value) {
+    message.value = "尚未选择自定义 CSS 文件";
+    return;
+  }
+  settings.reloadCustomCss();
+  message.value = "已重新加载自定义 CSS";
+}
+
 function close() {
   stopCapture();
   emit("close");
@@ -95,6 +125,20 @@ onBeforeUnmount(() => {
       <div v-if="message" class="shortcut-message">{{ message }}</div>
 
       <div class="shortcut-groups">
+        <section class="shortcut-group appearance-settings">
+          <h3>外观</h3>
+          <div class="settings-field">
+            <div class="shortcut-command">
+              <strong>自定义 CSS</strong>
+              <span>选择本机 CSS 文件后，会作用于编辑区和源码编辑区，配置保存在本机。</span>
+            </div>
+            <code class="settings-path" :title="customCssPath || '未选择'">{{ customCssPath || "未选择" }}</code>
+            <button @click="chooseCustomCss">选择文件</button>
+            <button @click="reloadCustomCssSetting">重新加载</button>
+            <button @click="clearCustomCssSetting">清除</button>
+          </div>
+        </section>
+
         <section v-for="group in groupedCommands" :key="group.group" class="shortcut-group">
           <h3>{{ group.label }}</h3>
           <div class="shortcut-row" v-for="command in group.commands" :key="command.id">

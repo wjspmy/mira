@@ -634,3 +634,37 @@ body { background: var(--bg); color: var(--fg); }
 .app-menu-item.active {
   background: var(--code-bg);
 }
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 240px) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.settings-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--code-bg);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.settings-field button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.settings-field button:hover { background: var(--code-bg); }
+@media (max-width: 720px) {
+  .settings-field { grid-template-columns: 1fr; align-items: stretch; }
+}

@@ -22,6 +22,7 @@ import { useSessionStore, type Doc } from "./stores/session";
 import { useRecentStore } from "./stores/recent";
 import { useShortcutsStore } from "./stores/shortcuts";
 import { useEditorModeStore } from "./stores/editor-mode";
+import { useSettingsStore } from "./stores/settings";
 import { SHORTCUT_COMMANDS, type ShortcutCommandId } from "./shortcuts/registry";
 import { displayShortcut, shortcutFromEvent } from "./shortcuts/keyboard";
 import type { AppMenuCommandId } from "./menus/appMenu";
@@ -36,12 +37,14 @@ import { open as openDialog, save as saveDialog, ask, message as messageDialog }
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window";
 import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, replacePathPrefix } from "./utils/path";
+import { clearCustomCss, upsertCustomCss } from "./editor/custom-css";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
 const recent = useRecentStore();
 const shortcuts = useShortcutsStore();
 const editorMode = useEditorModeStore();
+const settings = useSettingsStore();
 const status = ref("就绪");
 const showShortcutSettings = ref(false);
 const showCommandPalette = ref(false);
@@ -53,6 +56,30 @@ let paletteIndexRequest = 0;
 let paletteIndexTimer: number | null = null;
 let paletteIndexedRoot: string | null = null;
 let restoringSession = false;
+let customCssLoadRequest = 0;
+
+
+async function applyCustomCssFromSettings() {
+  const requestId = ++customCssLoadRequest;
+  const path = settings.customCssPath;
+  clearCustomCss();
+  if (!path) return;
+  try {
+    await invoke("allow_path", { path });
+    const css = await invoke<string>("read_text_file", { path });
+    if (requestId !== customCssLoadRequest || settings.customCssPath !== path) return;
+    upsertCustomCss(css);
+    status.value = `已加载自定义 CSS ${path}`;
+  } catch (error) {
+    if (requestId !== customCssLoadRequest) return;
+    clearCustomCss();
+    status.value = `自定义 CSS 加载失败：${error}`;
+  }
+}
+
+watch(() => [settings.customCssPath, settings.customCssVersion], () => {
+  void applyCustomCssFromSettings();
+});
 
 const DRAFTS_KEY = "mira-drafts";
 type DraftSnapshot = {
@@ -1302,6 +1329,7 @@ async function restoreLastSession() {
 }
 
 onMounted(async () => {
+  void applyCustomCssFromSettings();
   window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.addEventListener("mira:image-error", onImageError as EventListener);
   window.addEventListener("click", closeContextMenu);
@@ -1348,6 +1376,7 @@ onBeforeUnmount(() => {
   if (unlistenFs) unlistenFs();
   if (unlistenMoved) unlistenMoved();
   if (unlistenWindowClose) unlistenWindowClose();
+  clearCustomCss();
   for (const ed of editors.value.values()) ed.destroy();
   editors.value.clear();
   triggerRef(editors);

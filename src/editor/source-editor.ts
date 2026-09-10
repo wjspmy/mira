@@ -13,6 +13,11 @@ export interface SourceEditorHandlers {
   onRedoFallback?: SourceHistoryFallback;
 }
 
+export interface SourceEditorOptions {
+  /** 大文件降级：关闭 Markdown 语言包与高亮，只保留可虚拟滚动的基础编辑。 */
+  plain?: boolean;
+}
+
 function historyCommandWithFallback(command: StateCommand, fallback?: SourceHistoryFallback): StateCommand {
   return (target) => {
     if (command(target)) return true;
@@ -26,7 +31,11 @@ export function sourceDocumentChange(current: string, next: string): ChangeSpec 
   return { from: 0, to: current.length, insert: next };
 }
 
-export function createSourceEditorState(value: string, handlers: SourceEditorHandlers = {}): EditorState {
+export function createSourceEditorState(
+  value: string,
+  handlers: SourceEditorHandlers = {},
+  options: SourceEditorOptions = {},
+): EditorState {
   const sourceUndo = historyCommandWithFallback(undo, handlers.onUndoFallback);
   const sourceRedo = historyCommandWithFallback(redo, handlers.onRedoFallback);
   const extensions: Extension[] = [
@@ -42,9 +51,11 @@ export function createSourceEditorState(value: string, handlers: SourceEditorHan
       ...historyKeymap,
       indentWithTab,
     ]),
-    markdown(),
-    syntaxHighlighting(defaultHighlightStyle),
   ];
+
+  if (!options.plain) {
+    extensions.push(markdown(), syntaxHighlighting(defaultHighlightStyle));
+  }
 
   if (handlers.onChange) {
     extensions.push(EditorState.transactionExtender.of((transaction) => {

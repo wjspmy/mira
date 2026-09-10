@@ -158,6 +158,6 @@ git commit -m "feat: add custom css support"
 
 - [x] Task 1 implemented: persisted editor-mode state, configurable toggle shortcut, and View menu entry.
 - [x] Task 1 user manual testing.
-- [x] Task 2: CodeMirror source editor — committed scope accepted with known follow-up: 源码切回所见即所得后的光标/选区恢复仍待后续修复。
-- [ ] Task 3: Custom CSS loading and persistence.
-- [ ] Task 4: Documentation and final regression.
+- [x] Task 2: CodeMirror source editor — committed; source↔visual cursor/selection restored via per-doc `sourceSelection` + approximate markdown offset mapping.
+- [x] Task 3: Custom CSS loading and persistence (scoped injection + settings UI + file-change hot reload).
+- [x] Task 4: Documentation and final regression (README/design roadmap synced; large-doc source-mode prompt added; full test/build/cargo check after Phase 0).

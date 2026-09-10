@@ -3,12 +3,18 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { normalizeNativePath, normPath } from "../utils/path";
 
+export interface DocTextSelection {
+  from: number;
+  to: number;
+}
+
 export interface Doc {
   id: string;
   filePath: string | null; // null = 未命名新文档
   rawMd: string; // 最近一次序列化的 Markdown（保存/外部重载时更新）
   dirty: boolean; // 编辑器是否有未保存改动
   scrollTop?: number; // 编辑区滚动位置（仅内存态）
+  sourceSelection?: DocTextSelection; // 源码模式光标/选区（仅内存态）
 }
 
 export interface SessionSnapshot {

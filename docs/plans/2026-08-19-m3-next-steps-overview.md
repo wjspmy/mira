@@ -43,3 +43,10 @@
 - Source mode opens large files cleanly.
 - Custom CSS loads from a saved path and survives restart.
 - Existing M0-M3 behavior still passes regression checks.
+
+## Status (2026-08-19 closed)
+
+- Source mode + cursor/selection restore: done.
+- Large documents auto-open in CodeMirror source mode (virtualized, no modal): done.
+- Custom CSS persistence + scoped injection + file hot-reload: done.
+- Docs/roadmap synced; full regression after Phase 0.

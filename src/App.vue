@@ -38,6 +38,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window";
 import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, replacePathPrefix } from "./utils/path";
 import { clearCustomCss, upsertCustomCss } from "./editor/custom-css";
+import { formatDocSizeLabel, isLargeDocument } from "./editor/large-doc";
+import { visualSelectionToMarkdownOffset } from "./editor/mode-bridge";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
@@ -79,6 +81,18 @@ async function applyCustomCssFromSettings() {
 
 watch(() => [settings.customCssPath, settings.customCssVersion], () => {
   void applyCustomCssFromSettings();
+});
+
+// 监听自定义 CSS 所在目录，外部改动文件后自动热加载（设计 §19.3）。
+watch(() => settings.customCssPath, async (path) => {
+  if (!path) return;
+  try {
+    await invoke("allow_path", { path });
+    const dir = dirname(path);
+    if (dir) await invoke("watch", { root: dir });
+  } catch {
+    /* 监听失败不阻断编辑；仍可在设置里手动重新加载 */
+  }
 });
 
 const DRAFTS_KEY = "mira-drafts";
@@ -140,6 +154,7 @@ function removeDraftForDoc(doc: Pick<Doc, "id" | "filePath">) {
 
 function currentMarkdownForDoc(doc: Doc): string {
   if (editorMode.mode === "source" && doc.id === session.activeId) return doc.rawMd;
+  if (editorMode.mode === "source" && isLargeDocument(doc.rawMd)) return doc.rawMd;
   return markdownFromEditor(editorForDoc(doc.id)) || doc.rawMd;
 }
 
@@ -198,26 +213,48 @@ function toggleTheme() {
 }
 
 function focusVisualEditor() {
+  // 保持 Tiptap 自身选区，避免模式切换时被强制跳到文末。
   const ed = activeEditor.value as any;
-  const chain = ed?.chain?.().focus?.("end");
+  const chain = ed?.chain?.().focus?.();
   if (chain?.run) chain.run();
 }
 
 async function toggleSourceMode() {
+  const doc = session.activeDoc;
   if (editorMode.mode === "visual") {
     snapshotEditorDoc();
-  } else if (session.activeDoc) {
-    const visualMarkdown = markdownFromEditor(editorForDoc(session.activeDoc.id));
-    if (visualMarkdown !== session.activeDoc.rawMd) {
-      // 把源码模式的整次编辑作为一个历史节点同步回 Tiptap，保留此前的撤销栈。
-      setEditorContent(session.activeDoc.id, session.activeDoc.rawMd, false);
+    if (doc) {
+      doc.sourceSelection = visualSelectionToMarkdownOffset(editorForDoc(doc.id)) ?? undefined;
+    }
+  } else if (doc) {
+    sourceEditorRef.value?.flushPendingChange();
+    doc.sourceSelection = sourceEditorRef.value?.getSelection() ?? doc.sourceSelection;
+    if (isLargeDocument(doc.rawMd)) {
+      status.value = "大文档载入所见即所得视图可能较慢…";
+      setEditorContent(doc.id, doc.rawMd, false);
+    } else {
+      const visualMarkdown = markdownFromEditor(editorForDoc(doc.id));
+      if (visualMarkdown !== doc.rawMd) {
+        // 把源码模式的整次编辑作为一个历史节点同步回 Tiptap，保留此前的撤销栈。
+        setEditorContent(doc.id, doc.rawMd, false);
+      }
     }
   }
   const next = editorMode.toggleMode();
   await nextTick();
-  if (next === "source") sourceEditorRef.value?.focus();
+  if (next === "source") sourceEditorRef.value?.focus(session.activeDoc?.sourceSelection);
   else focusVisualEditor();
   status.value = next === "source" ? "已切换到源码模式" : "已切换到所见即所得模式";
+}
+
+/** 大文件默认走 CodeMirror 源码模式（虚拟滚动），对标 VS Code / Typora 的降级策略，不弹窗。 */
+async function preferSourceModeForLargeDoc(doc: Doc | null) {
+  if (!doc || editorMode.mode === "source") return;
+  if (!isLargeDocument(doc.rawMd)) return;
+  editorMode.setMode("source");
+  await nextTick();
+  sourceEditorRef.value?.focus();
+  status.value = `大文件（${formatDocSizeLabel(doc.rawMd)}）已使用源码模式打开`;
 }
 
 function onSourceUpdate(value: string) {
@@ -358,6 +395,8 @@ function markdownFromEditor(ed: CoreEditor | null | undefined): string {
 function getMarkdown(id: string | null = session.activeId): string {
   const doc = id ? session.docs.find((item) => item.id === id) : null;
   if (doc && editorMode.mode === "source" && id === session.activeId) return doc.rawMd;
+  // 源码模式下后台/大文件标签未挂载 Tiptap，必须用 rawMd。
+  if (doc && editorMode.mode === "source" && isLargeDocument(doc.rawMd)) return doc.rawMd;
   return markdownFromEditor(editorForDoc(id)) || doc?.rawMd || "";
 }
 
@@ -399,7 +438,8 @@ function createDocEditor(doc: Doc): Editor {
       MiraImage,
       Markdown.configure({ html: false, breaks: true }),
     ],
-    content: doc.rawMd || "",
+    // 大文件默认走源码模式，此处不解析整篇，避免创建 Tiptap 时卡死。
+    content: isLargeDocument(doc.rawMd) ? "" : (doc.rawMd || ""),
     editorProps: {
       handleKeyDown: () => false,
     },
@@ -436,9 +476,11 @@ function loadIntoEditor(md: string, docId: string | null = session.activeId) {
   if (!docId) return;
   const doc = session.docs.find((d) => d.id === docId);
   if (!doc) return;
+  doc.rawMd = md;
+  if (editorMode.mode === "source" && isLargeDocument(md)) return;
   ensureDocEditor(doc);
   setEditorContent(docId, md, true);
-  doc.rawMd = getMarkdown(docId);
+  if (!isLargeDocument(md)) doc.rawMd = getMarkdown(docId);
 }
 
 function snapshotEditorDoc(id: string | null = session.activeId) {
@@ -446,8 +488,9 @@ function snapshotEditorDoc(id: string | null = session.activeId) {
   const doc = session.docs.find((d) => d.id === id);
   if (!doc) return;
   if (editorMode.mode === "source" && id === session.activeId) return;
+  if (editorMode.mode === "source" && isLargeDocument(doc.rawMd)) return;
   const ed = editorForDoc(id);
-  if (ed) doc.rawMd = markdownFromEditor(ed);
+  if (ed && editorMode.mode === "visual") doc.rawMd = markdownFromEditor(ed);
 }
 
 function syncEditorDocDir(path: string | null | undefined, docId: string | null = session.activeId) {
@@ -566,6 +609,7 @@ async function openFile(path?: string) {
     const existing = session.findDocByPath(path);
     if (existing) {
       await switchTo(existing.id);
+      await preferSourceModeForLargeDoc(session.activeDoc);
       return;
     }
     const id = uuid();
@@ -579,6 +623,7 @@ async function openFile(path?: string) {
     await switchTo(id);
     recent.addRecent(path);
     persistSessionSoon();
+    await preferSourceModeForLargeDoc(session.activeDoc);
     status.value = `已打开 ${path}`;
   } catch (e) {
     // 文件可能已删除/移动，从最近列表清理
@@ -590,6 +635,7 @@ async function openFile(path?: string) {
 async function saveFile() {
   const doc = session.activeDoc;
   if (!doc) return;
+  if (editorMode.mode === "source") sourceEditorRef.value?.flushPendingChange();
   const md = getMarkdown();
   let path = doc.filePath;
   if (!path) {
@@ -1326,6 +1372,7 @@ async function restoreLastSession() {
   status.value = restored === snap.openPaths.length
     ? `已恢复 ${restored} 个文件`
     : `已恢复 ${restored}/${snap.openPaths.length} 个文件`;
+  await preferSourceModeForLargeDoc(session.activeDoc);
 }
 
 onMounted(async () => {
@@ -1342,6 +1389,11 @@ onMounted(async () => {
     if (fsTimers[path]) clearTimeout(fsTimers[path]);
     fsTimers[path] = setTimeout(async () => {
       delete fsTimers[path];
+      const cssPath = settings.customCssPath;
+      if (cssPath && normPath(normalizeNativePath(path)) === normPath(cssPath)) {
+        settings.reloadCustomCss();
+        return;
+      }
       // 文件树只需要结构变化；普通 modify 只交给已打开文档的重载逻辑，避免事件风暴卡顿。
       if (kind === "create" || kind === "delete") {
         try { await ws.refreshForPath(path); } catch { /* ignore */ }
@@ -1429,6 +1481,7 @@ onBeforeUnmount(() => {
         :key="`source-${session.activeId ?? 'empty'}`"
         :doc-id="activeDoc.id"
         :model-value="activeDoc.rawMd"
+        :initial-selection="activeDoc.sourceSelection"
         class="mira-editor editor source-editor-shell"
         @update:model-value="onSourceUpdate"
       />

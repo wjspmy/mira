@@ -35,7 +35,10 @@ export type ShortcutCommandId =
   | "openCommandPalette"
   | "findInDocument"
   | "replaceInDocument"
-  | "toggleOutline";
+  | "toggleOutline"
+  | "toggleFocusMode"
+  | "toggleTypewriterMode"
+  | "openWorkspaceSearch";
 
 export interface ShortcutCommand {
   id: ShortcutCommandId;
@@ -89,6 +92,9 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "findInDocument", title: "文内查找", group: "edit", defaultShortcut: "Mod+F", description: "在当前文档中查找" },
   { id: "replaceInDocument", title: "文内替换", group: "edit", defaultShortcut: "Mod+H", description: "查找并替换" },
   { id: "toggleOutline", title: "显示/隐藏大纲", group: "view", defaultShortcut: null },
+  { id: "toggleFocusMode", title: "专注模式", group: "view", defaultShortcut: null, description: "淡化非当前段落" },
+  { id: "toggleTypewriterMode", title: "打字机模式", group: "view", defaultShortcut: null, description: "光标行保持在屏幕中部" },
+  { id: "openWorkspaceSearch", title: "工作区搜索", group: "edit", defaultShortcut: "Mod+Shift+F", description: "在工作区文件中搜索文本（同 VS Code）" },
 ];
 
 export const SHORTCUT_COMMAND_BY_ID = Object.fromEntries(

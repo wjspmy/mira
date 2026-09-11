@@ -20,6 +20,9 @@ export default defineConfig(async () => ({
       output: {
         manualChunks(id) {
           if (id.includes("node_modules/katex") || id.includes("node_modules/mhchem")) return "katex";
+          if (id.includes("node_modules/mermaid") || id.includes("node_modules/d3-") || id.includes("node_modules/cytoscape")) {
+            return "mermaid";
+          }
           if (id.includes("node_modules/@codemirror") || id.includes("node_modules/@lezer")) return "codemirror";
           if (
             id.includes("node_modules/@tiptap") ||

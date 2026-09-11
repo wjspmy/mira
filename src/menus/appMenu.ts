@@ -109,6 +109,12 @@ export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
           shortcut: shortcut(shortcuts, "replaceInDocument"),
           disabled: !hasActiveDoc,
         },
+        {
+          id: "openWorkspaceSearch",
+          label: "工作区搜索…",
+          shortcut: shortcut(shortcuts, "openWorkspaceSearch"),
+          separatorBefore: true,
+        },
       ],
     },
     {
@@ -129,6 +135,16 @@ export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
           id: "toggleOutline",
           label: "大纲",
           shortcut: shortcut(shortcuts, "toggleOutline"),
+        },
+        {
+          id: "toggleFocusMode",
+          label: "专注模式",
+          shortcut: shortcut(shortcuts, "toggleFocusMode"),
+        },
+        {
+          id: "toggleTypewriterMode",
+          label: "打字机模式",
+          shortcut: shortcut(shortcuts, "toggleTypewriterMode"),
         },
         {
           id: "toggleSourceMode",

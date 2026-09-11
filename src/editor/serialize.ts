@@ -37,6 +37,7 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import { MathInline, MathBlock, mathPlugin } from "./math";
 import { GithubAlertBlockquote } from "./github-alert";
+import { DetailsBlock, DetailsSummary } from "./details";
 
 const lowlight = createLowlight(common);
 
@@ -51,6 +52,8 @@ function ensureEditor(): Editor {
       extensions: [
         StarterKit.configure({ codeBlock: false, blockquote: false }),
         GithubAlertBlockquote,
+        DetailsBlock,
+        DetailsSummary,
         CodeBlockLowlight.configure({ lowlight }),
         Table, TableRow, TableHeader, TableCell,
         TaskList, TaskItem.configure({ nested: true }),
@@ -98,14 +101,10 @@ class Serializer {
     if (this.lines.length && this.lines[this.lines.length - 1] !== "") this.lines.push("");
   }
 
-  // 行内：把 marks 转成包裹符
+  // 行内：把 marks 转成包裹符（按优先级嵌套，避免 `***斜***` 歧义）
   private inline(node: PmNode): string {
     if (node.isText && node.text) {
-      let t = node.text;
-      for (const m of node.marks as Mark[]) {
-        t = wrapMark(m, t);
-      }
-      return t;
+      return wrapMarks(node.marks as Mark[], node.text);
     }
     // 非文本行内节点
     switch (node.type.name) {
@@ -257,6 +256,24 @@ class Serializer {
         this.push("---");
         this.blank();
         break;
+      case "details": {
+        this.push("<details>");
+        node.forEach((child) => {
+          if (child.type.name === "detailsSummary") {
+            this.push("<summary>" + this.inlineContent(child) + "</summary>");
+            this.push("");
+          } else {
+            this.block(child);
+          }
+        });
+        this.push("</details>");
+        this.blank();
+        break;
+      }
+      case "detailsSummary":
+        this.push(this.inlineContent(node));
+        this.blank();
+        break;
       default:
         // 兜底：纯文本
         if (node.content.size > 0) this.push(this.inlineContent(node));
@@ -274,30 +291,60 @@ class Serializer {
   }
 
   private serializeTable(node: PmNode) {
-    // 假设结构：table > tableRow > (tableHeader | tableCell)
+    // 结构：table > tableRow > (tableHeader | tableCell)
     const rows: PmNode[] = [];
     node.forEach((r) => rows.push(r));
     if (!rows.length) return;
 
-    const cells = (row: PmNode) => {
+    const cellsOf = (row: PmNode) => {
       const c: PmNode[] = [];
       row.forEach((x) => c.push(x));
-      return c.map((cell) => this.inlineContent(cell).replace(/\|/g, "\\|").replace(/\n/g, " "));
+      return c;
     };
-    const headerCells = cells(rows[0]);
-    const align = (rows[0] as any).attrs?.align; // 暂不深挖对齐
-    void align;
+    const cellText = (cell: PmNode) =>
+      this.inlineContent(cell).replace(/\|/g, "\\|").replace(/\n/g, " ");
+    const alignOf = (cell: PmNode): string => {
+      const a = (cell.attrs as { textAlign?: string; align?: string } | undefined) || {};
+      const align = a.textAlign || a.align;
+      if (align === "left") return ":---";
+      if (align === "right") return "---:";
+      if (align === "center") return ":---:";
+      return "---";
+    };
+
+    const headerRow = cellsOf(rows[0]);
+    const headerCells = headerRow.map(cellText);
+    const alignCells = headerRow.map(alignOf);
     this.push("| " + headerCells.join(" | ") + " |");
-    this.push("| " + headerCells.map(() => "---").join(" | ") + " |");
+    this.push("| " + alignCells.join(" | ") + " |");
     for (let r = 1; r < rows.length; r++) {
-      this.push("| " + cells(rows[r]).join(" | ") + " |");
+      this.push("| " + cellsOf(rows[r]).map(cellText).join(" | ") + " |");
     }
   }
 }
 
-// mark → 包裹符号
+// mark → 包裹符号。code 最外层，其次 strike/bold，italic 最内，避免 `***` 歧义。
+const MARK_PRIORITY: Record<string, number> = {
+  code: 0,
+  strike: 1,
+  bold: 2,
+  italic: 3,
+  link: 4,
+};
+
+function wrapMarks(marks: readonly Mark[], text: string): string {
+  const sorted = [...marks].sort(
+    (a, b) => (MARK_PRIORITY[a.type.name] ?? 9) - (MARK_PRIORITY[b.type.name] ?? 9),
+  );
+  let out = text;
+  for (const m of sorted) {
+    out = wrapMark(m, out);
+  }
+  return out;
+}
+
 function wrapMark(m: Mark, text: string): string {
-  switch (m.attrs && m.type.name ? m.type.name : (m as any).type.name) {
+  switch (m.type.name) {
     case "bold":
       return `**${text}**`;
     case "italic":
@@ -306,8 +353,12 @@ function wrapMark(m: Mark, text: string): string {
       return `~~${text}~~`;
     case "code":
       return text.includes("`") ? "`` " + text + " ``" : "`" + text + "`";
-    case "link":
-      return `[${text}](${m.attrs!.href})`;
+    case "link": {
+      const href = m.attrs?.href ?? "";
+      const title = m.attrs?.title as string | undefined;
+      if (title) return `[${text}](${href} "${title}")`;
+      return `[${text}](${href})`;
+    }
     default:
       return text;
   }

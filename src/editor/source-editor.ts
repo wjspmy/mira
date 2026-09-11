@@ -1,8 +1,9 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab, redo, undo } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { EditorState, type ChangeSpec, type Extension, type StateCommand } from "@codemirror/state";
-import { drawSelection, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
+import { drawSelection, EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 
 export type SourceTextChange = (value: string) => void;
 export type SourceHistoryFallback = () => void;
@@ -43,10 +44,13 @@ export function createSourceEditorState(
     highlightActiveLine(),
     drawSelection(),
     history(),
+    closeBrackets(),
+    EditorView.lineWrapping,
     keymap.of([
       { key: "Mod-z", run: sourceUndo },
       { key: "Mod-y", run: sourceRedo },
       { key: "Mod-Shift-z", run: sourceRedo },
+      ...closeBracketsKeymap,
       ...defaultKeymap,
       ...historyKeymap,
       indentWithTab,

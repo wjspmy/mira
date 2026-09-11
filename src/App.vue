@@ -36,7 +36,25 @@ import FindReplace from "./components/FindReplace.vue";
 import EditorToolbar from "./components/EditorToolbar.vue";
 import AppMenuBar from "./components/AppMenuBar.vue";
 import { GithubAlertBlockquote } from "./editor/github-alert";
-import { buildAlertBlockquote, type EditorToolbarAction, type GithubAlertType } from "./editor/toolbar";
+import {
+  buildAlertBlockquote,
+  DEFAULT_MATH_BLOCK,
+  DEFAULT_MERMAID_SNIPPET,
+  type EditorToolbarAction,
+  type GithubAlertType,
+  type ToolbarActiveMap,
+} from "./editor/toolbar";
+import { createMermaidCodeBlock } from "./editor/mermaid";
+import { FootnoteHighlight } from "./editor/footnotes";
+import { FocusModeHighlight } from "./editor/focus-mode";
+import { AutoPair } from "./editor/auto-pair";
+import { DetailsBlock, DetailsSummary } from "./editor/details";
+import { buildTocMarkdown } from "./editor/toc";
+import SlashMenu from "./components/SlashMenu.vue";
+import WorkspaceSearch from "./components/WorkspaceSearch.vue";
+import EmojiPicker from "./components/EmojiPicker.vue";
+import type { SlashCommand } from "./editor/slash";
+import { buildFrontMatterTemplate, hasFrontMatter } from "./editor/front-matter";
 import { extractOutline, type OutlineItem } from "./editor/outline";
 import { countDocumentStats, formatStatsLabel } from "./editor/stats";
 import { findMatches, nextMatchIndex, replaceAllMatches } from "./editor/find-replace";
@@ -64,6 +82,14 @@ const status = ref("就绪");
 const showShortcutSettings = ref(false);
 const showCommandPalette = ref(false);
 const showOutline = ref(localStorage.getItem("mira-outline") === "1");
+const focusMode = ref(localStorage.getItem("mira-focus-mode") === "1");
+const typewriterMode = ref(localStorage.getItem("mira-typewriter") === "1");
+const showSlashMenu = ref(false);
+const slashQuery = ref("");
+const slashPos = ref({ x: 200, y: 200 });
+const showWorkspaceSearch = ref(false);
+const showEmoji = ref(false);
+const emojiPos = ref({ x: 240, y: 160 });
 const showFindReplace = ref(false);
 const findShowReplaceRow = ref(false);
 const findQuery = ref("");
@@ -393,26 +419,7 @@ watch(
 );
 
 const lowlight = createLowlight(common);
-const MiraCodeBlockLowlight = CodeBlockLowlight.extend({
-  renderHTML({ node, HTMLAttributes }: any) {
-    const language = node.attrs.language as string | null;
-    return [
-      "pre",
-      {
-        ...this.options.HTMLAttributes,
-        ...HTMLAttributes,
-        ...(language ? { "data-language": language } : {}),
-      },
-      [
-        "code",
-        {
-          class: language ? this.options.languageClassPrefix + language : null,
-        },
-        0,
-      ],
-    ];
-  },
-});
+const MiraCodeBlockLowlight = createMermaidCodeBlock(CodeBlockLowlight, lowlight) as typeof CodeBlockLowlight;
 const loadingDocIds = new Set<string>(); // Suppress onUpdate during programmatic editor state changes.
 const editors = shallowRef(new Map<string, Editor>());
 
@@ -476,12 +483,48 @@ function createDocEditor(doc: Doc): Editor {
       MathInline,
       MathBlock,
       MiraImage,
+      FootnoteHighlight,
+      FocusModeHighlight,
+      AutoPair,
+      DetailsBlock,
+      DetailsSummary,
       Markdown.configure({ html: false, breaks: true }),
     ],
     // 大文件默认走源码模式，此处不解析整篇，避免创建 Tiptap 时卡死。
     content: isLargeDocument(doc.rawMd) ? "" : (doc.rawMd || ""),
     editorProps: {
-      handleKeyDown: () => false,
+      handleKeyDown: (_view, event) => {
+        if (event.key === "/" && editorMode.mode === "visual") {
+          const { $from, empty } = _view.state.selection;
+          if (empty && $from.parent.type.name === "paragraph") {
+            const coords = _view.coordsAtPos($from.pos);
+            slashPos.value = { x: coords.left, y: coords.bottom + 4 };
+            slashQuery.value = "";
+            showSlashMenu.value = true;
+          }
+        }
+        if (showSlashMenu.value && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
+          return false;
+        }
+        return false;
+      },
+      handleClick: (_view, _pos, event) => {
+        // 代码块右上角「复制」热区（Vditor / GitHub 风格）
+        const target = event.target as HTMLElement;
+        const pre = target.closest("pre[data-language]") as HTMLElement | null;
+        if (!pre) return false;
+        const rect = pre.getBoundingClientRect();
+        const inCopyZone =
+          event.clientY - rect.top < 28 && event.clientX > rect.right - 96;
+        if (!inCopyZone) return false;
+        const code = pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
+        void navigator.clipboard?.writeText(code).then(() => {
+          status.value = "已复制代码";
+        }).catch(() => {
+          status.value = "复制失败";
+        });
+        return true;
+      },
     },
     onUpdate: ({ editor: updatedEditor }) => {
       if (loadingDocIds.has(doc.id)) return;
@@ -489,6 +532,19 @@ function createDocEditor(doc: Doc): Editor {
       doc.dirty = true;
       saveDraftForDoc(doc);
       scheduleAutosave();
+      if (typewriterMode.value && doc.id === session.activeId) {
+        void nextTick(() => applyTypewriterScroll());
+      }
+      if (showSlashMenu.value && doc.id === session.activeId) {
+        const { $from } = updatedEditor.state.selection;
+        const text = $from.parent.textContent;
+        const slashIdx = text.lastIndexOf("/");
+        if (slashIdx >= 0 && $from.pos > $from.start()) {
+          slashQuery.value = text.slice(slashIdx + 1);
+        } else {
+          showSlashMenu.value = false;
+        }
+      }
     },
   });
   ed.storage.miraDocDir = doc.filePath ? dirname(doc.filePath) || undefined : undefined;
@@ -597,6 +653,58 @@ const findMatchCount = computed(() => {
 function toggleOutline() {
   showOutline.value = !showOutline.value;
   localStorage.setItem("mira-outline", showOutline.value ? "1" : "0");
+}
+
+function applyFocusMode() {
+  document.documentElement.dataset.focusMode = focusMode.value ? "1" : "0";
+  document.body.classList.toggle("focus-mode", focusMode.value);
+  // 用 transaction 触发 decoration 重算（不要直接改 PM DOM）
+  const ed = activeEditor.value;
+  if (ed) {
+    ed.view.dispatch(ed.state.tr.setMeta("mira-focus-mode", true));
+  }
+}
+
+function toggleFocusMode() {
+  focusMode.value = !focusMode.value;
+  localStorage.setItem("mira-focus-mode", focusMode.value ? "1" : "0");
+  applyFocusMode();
+  status.value = focusMode.value ? "已开启专注模式" : "已关闭专注模式";
+}
+
+function applyTypewriterScroll() {
+  if (!typewriterMode.value) return;
+  if (typewriterRaf) cancelAnimationFrame(typewriterRaf);
+  typewriterRaf = requestAnimationFrame(() => {
+    typewriterRaf = null;
+    if (!typewriterMode.value) return;
+    const scroller = editorScroller();
+    if (!scroller) return;
+    const ed = activeEditor.value;
+    if (!ed || editorMode.mode !== "visual") return;
+    const { from } = ed.state.selection;
+    let coords: { top: number } | null = null;
+    try {
+      coords = ed.view.coordsAtPos(from);
+    } catch {
+      return;
+    }
+    if (!coords) return;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const targetY = scrollerRect.top + scrollerRect.height * 0.4;
+    const delta = coords.top - targetY;
+    if (Math.abs(delta) > 12) scroller.scrollTop += delta;
+  });
+}
+
+let typewriterRaf: number | null = null;
+
+function toggleTypewriterMode() {
+  typewriterMode.value = !typewriterMode.value;
+  localStorage.setItem("mira-typewriter", typewriterMode.value ? "1" : "0");
+  document.body.classList.toggle("typewriter-mode", typewriterMode.value);
+  if (typewriterMode.value) applyTypewriterScroll();
+  status.value = typewriterMode.value ? "已开启打字机模式" : "已关闭打字机模式";
 }
 
 function openFind(withReplace = false) {
@@ -1533,18 +1641,171 @@ function insertGithubAlert(type: GithubAlertType) {
   ed.chain().focus().insertContent(md).run();
 }
 
+function insertImageFromDialog() {
+  const ed = activeEditor.value as any;
+  if (!ed) return;
+  const url = window.prompt("图片路径或 URL", "");
+  if (url === null) return;
+  if (!url.trim()) return;
+  ed.chain().focus().setImage({ src: url.trim(), alt: "" }).run();
+}
+
+function insertDetailsBlock() {
+  const ed = activeEditor.value as any;
+  if (!ed) return;
+  ed
+    .chain()
+    .focus()
+    .insertContent({
+      type: "details",
+      content: [
+        { type: "detailsSummary", content: [{ type: "text", text: "标题" }] },
+        { type: "paragraph", content: [{ type: "text", text: "折叠内容…" }] },
+      ],
+    })
+    .run();
+}
+
+function insertToc() {
+  const ed = activeEditor.value as any;
+  if (!ed || !session.activeDoc) return;
+  const md = markdownFromEditor(ed);
+  const toc = buildTocMarkdown(md);
+  if (!toc) {
+    status.value = "当前文档没有标题，无法生成目录";
+    return;
+  }
+  ed.chain().focus().insertContent(toc).run();
+  status.value = "已插入目录";
+}
+
+function openWorkspaceSearchPanel() {
+  if (!ws.rootPath) {
+    status.value = "请先打开文件夹";
+    return;
+  }
+  showWorkspaceSearch.value = true;
+}
+
+function runSlashCommand(cmd: SlashCommand) {
+  const ed = activeEditor.value as any;
+  if (ed) {
+    const { from } = ed.state.selection;
+    if (from > 0 && ed.state.doc.textBetween(from - 1, from, "\n") === "/") {
+      ed.chain().deleteRange({ from: from - 1, to: from }).focus().run();
+    }
+  }
+  showSlashMenu.value = false;
+  slashQuery.value = "";
+  handleToolbarAction(cmd.id as EditorToolbarAction);
+}
+
+function onSlashMenuClose() {
+  showSlashMenu.value = false;
+  slashQuery.value = "";
+}
+
+function openSearchResult(path: string) {
+  showWorkspaceSearch.value = false;
+  void openFile(path);
+}
+
+function openEmojiPicker() {
+  const ed = activeEditor.value as any;
+  if (!ed) return;
+  try {
+    const coords = ed.view.coordsAtPos(ed.state.selection.from);
+    emojiPos.value = { x: Math.min(coords.left, window.innerWidth - 320), y: coords.bottom + 6 };
+  } catch {
+    emojiPos.value = { x: 240, y: 160 };
+  }
+  showEmoji.value = true;
+}
+
+function pickEmoji(emoji: string) {
+  showEmoji.value = false;
+  const ed = activeEditor.value as any;
+  ed?.chain().focus().insertContent(emoji).run();
+}
+
+function insertFrontMatter() {
+  if (!session.activeDoc) return;
+  if (editorMode.mode === "source") {
+    if (hasFrontMatter(session.activeDoc.rawMd)) {
+      status.value = "文档已有 Front Matter";
+      return;
+    }
+    const title = session.activeDoc.filePath ? basename(session.activeDoc.filePath).replace(/\.md$/i, "") : "untitled";
+    session.activeDoc.rawMd = buildFrontMatterTemplate(title) + session.activeDoc.rawMd;
+    session.activeDoc.dirty = true;
+    saveDraftForDoc(session.activeDoc);
+    scheduleAutosave();
+    status.value = "已插入 Front Matter";
+    return;
+  }
+  const ed = activeEditor.value as any;
+  if (!ed) return;
+  const md = markdownFromEditor(ed);
+  if (hasFrontMatter(md)) {
+    status.value = "文档已有 Front Matter";
+    return;
+  }
+  const title = session.activeDoc.filePath ? basename(session.activeDoc.filePath).replace(/\.md$/i, "") : "untitled";
+  const next = buildFrontMatterTemplate(title) + md;
+  setEditorContent(session.activeDoc.id, next, true);
+  session.activeDoc.rawMd = markdownFromEditor(editorForDoc(session.activeDoc.id));
+  session.activeDoc.dirty = true;
+  saveDraftForDoc(session.activeDoc);
+  scheduleAutosave();
+  status.value = "已插入 Front Matter";
+}
+
+const toolbarActive = computed<ToolbarActiveMap>(() => {
+  const ed = activeEditor.value as any;
+  if (!ed || editorMode.mode !== "visual") return {};
+  return {
+    bold: ed.isActive("bold"),
+    italic: ed.isActive("italic"),
+    strike: ed.isActive("strike"),
+    code: ed.isActive("code"),
+    bulletList: ed.isActive("bulletList"),
+    orderedList: ed.isActive("orderedList"),
+    taskList: ed.isActive("taskList"),
+    blockquote: ed.isActive("blockquote"),
+    codeBlock: ed.isActive("codeBlock"),
+    paragraph: ed.isActive("paragraph"),
+    heading1: ed.isActive("heading", { level: 1 }),
+    heading2: ed.isActive("heading", { level: 2 }),
+    heading3: ed.isActive("heading", { level: 3 }),
+    heading4: ed.isActive("heading", { level: 4 }),
+    heading5: ed.isActive("heading", { level: 5 }),
+    heading6: ed.isActive("heading", { level: 6 }),
+    toggleOutline: showOutline.value,
+  };
+});
+
 function handleToolbarAction(action: EditorToolbarAction) {
   const ed = activeEditor.value as any;
   switch (action) {
+    case "undo":
+      undoVisualEditorHistory();
+      break;
+    case "redo":
+      redoVisualEditorHistory();
+      break;
+    case "paragraph":
+      ed?.chain().focus().setParagraph().run();
+      break;
     case "heading1":
-      ed?.chain().focus().toggleHeading({ level: 1 }).run();
-      break;
     case "heading2":
-      ed?.chain().focus().toggleHeading({ level: 2 }).run();
-      break;
     case "heading3":
-      ed?.chain().focus().toggleHeading({ level: 3 }).run();
+    case "heading4":
+    case "heading5":
+    case "heading6": {
+      const level = Number(action.replace("heading", "")) as 1 | 2 | 3 | 4 | 5 | 6;
+      ed?.chain().focus().toggleHeading({ level }).run();
       break;
+    }
     case "bold":
       runEditorCommand("toggleBold");
       break;
@@ -1559,6 +1820,9 @@ function handleToolbarAction(action: EditorToolbarAction) {
       break;
     case "link":
       insertLink();
+      break;
+    case "image":
+      insertImageFromDialog();
       break;
     case "bulletList":
       runEditorCommand("toggleBulletList");
@@ -1581,6 +1845,27 @@ function handleToolbarAction(action: EditorToolbarAction) {
     case "insertTable":
       ed?.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run();
       break;
+    case "addTableRow":
+      ed?.chain().focus().addRowAfter().run();
+      break;
+    case "addTableColumn":
+      ed?.chain().focus().addColumnAfter().run();
+      break;
+    case "deleteTableRow":
+      ed?.chain().focus().deleteRow().run();
+      break;
+    case "deleteTableColumn":
+      ed?.chain().focus().deleteColumn().run();
+      break;
+    case "insertMermaid":
+      ed?.chain().focus().insertContent({ type: "codeBlock", attrs: { language: "mermaid" }, content: [{ type: "text", text: DEFAULT_MERMAID_SNIPPET }] }).run();
+      break;
+    case "insertMathInline":
+      ed?.chain().focus().insertContent(`$${DEFAULT_MATH_BLOCK}$`).run();
+      break;
+    case "insertMathBlock":
+      ed?.chain().focus().insertContent({ type: "mathBlock", attrs: { latex: DEFAULT_MATH_BLOCK } }).run();
+      break;
     case "alertNote":
       insertGithubAlert("NOTE");
       break;
@@ -1589,6 +1874,36 @@ function handleToolbarAction(action: EditorToolbarAction) {
       break;
     case "alertTip":
       insertGithubAlert("TIP");
+      break;
+    case "toggleOutline":
+      toggleOutline();
+      break;
+    case "toggleSourceMode":
+      void toggleSourceMode();
+      break;
+    case "openFind":
+      openFindOnly();
+      break;
+    case "insertDetails":
+      insertDetailsBlock();
+      break;
+    case "insertToc":
+      insertToc();
+      break;
+    case "toggleFocusMode":
+      toggleFocusMode();
+      break;
+    case "toggleTypewriterMode":
+      toggleTypewriterMode();
+      break;
+    case "openWorkspaceSearch":
+      openWorkspaceSearchPanel();
+      break;
+    case "openEmoji":
+      openEmojiPicker();
+      break;
+    case "insertFrontMatter":
+      insertFrontMatter();
       break;
   }
   if (editorMode.mode === "visual" && session.activeDoc) {
@@ -1744,6 +2059,8 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     findInDocument: openFindOnly,
     replaceInDocument: openFindAndReplace,
     toggleOutline,
+    toggleFocusMode,
+    toggleTypewriterMode,
   };
 
   await handlers[commandId]?.();
@@ -1822,6 +2139,8 @@ async function restoreLastSession() {
 
 onMounted(async () => {
   void applyCustomCssFromSettings();
+  applyFocusMode();
+  document.body.classList.toggle("typewriter-mode", typewriterMode.value);
   window.addEventListener("mira:image-inserted", onImageInserted as EventListener);
   window.addEventListener("mira:image-error", onImageError as EventListener);
   window.addEventListener("click", closeContextMenu);
@@ -1896,6 +2215,7 @@ onBeforeUnmount(() => {
       v-if="activeDoc"
       :disabled="!hasActiveDoc"
       :mode="editorMode.mode"
+      :active="toolbarActive"
       @action="handleToolbarAction"
     />
     <div class="body">
@@ -1993,6 +2313,27 @@ onBeforeUnmount(() => {
       <div class="context-separator"></div>
       <button @click="contextRefresh">刷新</button>
     </div>
+    <WorkspaceSearch
+      v-if="showWorkspaceSearch"
+      :workspace-root="ws.rootPath"
+      @close="showWorkspaceSearch = false"
+      @open="openSearchResult"
+    />
+    <EmojiPicker
+      v-if="showEmoji"
+      :x="emojiPos.x"
+      :y="emojiPos.y"
+      @pick="pickEmoji"
+      @close="showEmoji = false"
+    />
+    <SlashMenu
+      v-if="showSlashMenu && activeDoc && editorMode.mode === 'visual'"
+      :query="slashQuery"
+      :x="slashPos.x"
+      :y="slashPos.y"
+      @run="runSlashCommand"
+      @close="onSlashMenuClose"
+    />
     <ShortcutSettings v-if="showShortcutSettings" @close="showShortcutSettings = false" />
     <CommandPalette
       v-if="showCommandPalette"

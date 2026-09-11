@@ -29,9 +29,18 @@ describe("app menu model", () => {
     const groups = buildAppMenuGroups({ recentPaths: [], shortcuts, hasActiveDoc: false, hasOpenTabs: false });
     const file = groups.find((group) => group.id === "file")!;
     expect(file.items.find((item) => item.id === "saveFile")?.disabled).toBe(true);
+    expect(file.items.find((item) => item.id === "exportHtml")?.disabled).toBe(true);
+    expect(file.items.find((item) => item.id === "exportPdf")?.disabled).toBe(true);
     expect(file.items.find((item) => item.id === "closeTab")?.disabled).toBe(true);
 
     const format = groups.find((group) => group.id === "format")!;
     expect(format.items.every((item) => item.disabled)).toBe(true);
+  });
+
+  it("exposes export actions when a document is open", () => {
+    const groups = buildAppMenuGroups({ recentPaths: [], shortcuts, hasActiveDoc: true, hasOpenTabs: true });
+    const file = groups.find((group) => group.id === "file")!;
+    expect(file.items.find((item) => item.id === "exportHtml")?.disabled).toBeFalsy();
+    expect(file.items.find((item) => item.id === "exportPdf")?.disabled).toBeFalsy();
   });
 });

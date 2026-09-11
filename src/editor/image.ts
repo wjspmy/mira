@@ -131,7 +131,20 @@ async function insertImageFile(view: any, editor: any, docDir: string, file: Fil
   const bytes = new Uint8Array(await file.arrayBuffer());
   const name = file.name || `pasted-${Date.now()}.png`;
   try {
-    const rel = await invoke<string>("write_asset", { dir: docDir, name, bytes: Array.from(bytes) });
+    // 读取图片策略（相对路径 / assets 子目录）；绝对路径策略对粘贴 blob 不适用，回退 assets。
+    let subdir: string | undefined;
+    try {
+      const raw = JSON.parse(localStorage.getItem("mira-settings") || "{}");
+      if (raw?.imageStrategy === "relative") subdir = ".";
+    } catch {
+      /* ignore */
+    }
+    const rel = await invoke<string>("write_asset", {
+      dir: docDir,
+      name,
+      bytes: Array.from(bytes),
+      subdir,
+    });
     const node = editor.schema.nodes.image.create({ src: rel, alt: name });
     const safeFrom = Math.min(from, view.state.doc.content.size);
     const safeTo = Math.min(to, view.state.doc.content.size);

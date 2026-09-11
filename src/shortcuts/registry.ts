@@ -5,6 +5,8 @@ export type ShortcutCommandId =
   | "openFile"
   | "openFolder"
   | "saveFile"
+  | "exportHtml"
+  | "exportPdf"
   | "closeTab"
   | "nextTab"
   | "prevTab"
@@ -50,6 +52,8 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "openFile", title: "打开文件", group: "file", defaultShortcut: "Mod+O" },
   { id: "openFolder", title: "打开文件夹", group: "file", defaultShortcut: "Mod+Shift+O" },
   { id: "saveFile", title: "保存当前文档", group: "file", defaultShortcut: "Mod+S" },
+  { id: "exportHtml", title: "导出 HTML", group: "file", defaultShortcut: null },
+  { id: "exportPdf", title: "导出 PDF（打印）", group: "file", defaultShortcut: null },
   { id: "closeTab", title: "关闭当前标签页", group: "tabs", defaultShortcut: "Mod+W" },
   { id: "nextTab", title: "切换到下一个标签页", group: "tabs", defaultShortcut: "Mod+Tab" },
   { id: "prevTab", title: "切换到上一个标签页", group: "tabs", defaultShortcut: "Mod+Shift+Tab" },

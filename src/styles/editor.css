@@ -225,7 +225,7 @@ body { background: var(--bg); color: var(--fg); }
   min-height: 100%;
   outline: none;
   line-height: 1.7;
-  font-size: 16px;
+  font-size: var(--editor-font-size, 16px);
 }
 .editor .ProseMirror h1 { font-size: 1.9em; margin: 0.8em 0 0.4em; }
 .editor .ProseMirror h2 { font-size: 1.5em; margin: 0.8em 0 0.4em; }
@@ -665,6 +665,27 @@ body { background: var(--bg); color: var(--fg); }
   font-size: 12px;
 }
 .settings-field button:hover { background: var(--code-bg); }
+.settings-select,
+.settings-range {
+  width: 100%;
+  max-width: 240px;
+  justify-self: start;
+}
+.settings-select {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.settings-range {
+  accent-color: var(--accent);
+}
+.settings-field:has(.settings-select),
+.settings-field:has(.settings-range) {
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 240px);
+}
 @media (max-width: 720px) {
   .settings-field { grid-template-columns: 1fr; align-items: stretch; }
 }

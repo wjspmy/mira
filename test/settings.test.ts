@@ -52,7 +52,7 @@ describe("settings store", () => {
 
     store.setCustomCssPath(String.raw`\\?\C:\theme\mira.css`);
     expect(store.customCssPath).toBe(String.raw`C:\theme\mira.css`);
-    expect(JSON.parse(storage.get("mira-settings") || "{}")).toEqual({
+    expect(JSON.parse(storage.get("mira-settings") || "{}")).toMatchObject({
       customCssPath: String.raw`C:\theme\mira.css`,
       customCssVersion: 1,
     });
@@ -66,7 +66,24 @@ describe("settings store", () => {
     store.setCustomCssPath(String.raw`C:\theme\mira.css`);
     store.clearCustomCssPath();
     expect(store.customCssPath).toBe("");
-    expect(JSON.parse(storage.get("mira-settings") || "{}")).toEqual({ customCssPath: "", customCssVersion: 2 });
+    expect(JSON.parse(storage.get("mira-settings") || "{}")).toMatchObject({ customCssPath: "", customCssVersion: 2 });
+  });
+
+  it("clamps and persists editor preferences", () => {
+    const store = useSettingsStore();
+    store.patch({ editorFontSize: 99, autoSaveDelayMs: 50, imageStrategy: "relative" });
+    expect(store.editorFontSize).toBe(28);
+    expect(store.autoSaveDelayMs).toBe(300);
+    expect(store.imageStrategy).toBe("relative");
+
+    store.setTheme("dark");
+    expect(store.theme).toBe("dark");
+    expect(storage.get("mira-theme")).toBe("dark");
+    expect(store.resolveTheme(false)).toBe("dark");
+
+    store.setTheme("system");
+    expect(store.resolveTheme(true)).toBe("dark");
+    expect(store.resolveTheme(false)).toBe("light");
   });
 });
 

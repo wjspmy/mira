@@ -1,15 +1,19 @@
 /*
-  Mira 自定义 CSS 测试主题
-  用法：设置 → 外观 / 自定义 CSS → 选择这个文件
+  Mira 自定义 CSS 测试样例
+  用法：设置与快捷键 → 外观与编辑 → 自定义 CSS → 选择本文件
 
-  这个文件故意写得“很显眼”，方便你一眼判断自定义 CSS 是否生效。
+  故意使用高对比、易识别的样式，方便确认：
+  1) 选择文件后是否立即生效
+  2) 用编辑器改本文件后是否热加载（保存后 1 秒内应变）
+  3) 源码模式 (.source-editor) 与所见即所得 (.editor .ProseMirror) 是否都生效
 */
 
+/* 内容栏更宽，一眼能看出 CSS 作用域 */
 :root {
   --content-width: 960px;
 }
 
-/* 所见所得编辑区：标题 */
+/* —— 所见即所得 —— */
 h1 {
   color: #7c3aed;
   border-bottom: 3px solid #a78bfa;
@@ -22,13 +26,11 @@ h2 {
   padding-left: 10px;
 }
 
-/* 正文段落 */
 p {
   font-size: 17px;
   line-height: 1.95;
 }
 
-/* 引用块 */
 blockquote {
   border-left: 6px solid #f97316;
   background: rgba(249, 115, 22, 0.08);
@@ -36,27 +38,24 @@ blockquote {
   border-radius: 8px;
 }
 
-/* 代码块 */
 pre {
   border: 2px dashed #22c55e;
   box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
   border-radius: 10px;
 }
 
-/* 行内代码 */
 code {
   color: #dc2626;
   font-weight: 600;
 }
 
-/* 任务列表 */
 ul[data-type="taskList"] {
   background: rgba(59, 130, 246, 0.08);
   border-radius: 10px;
   padding: 12px;
 }
 
-/* 源码模式：编辑器背景和行高 */
+/* —— 源码模式（CodeMirror）—— */
 .cm-editor {
   background: #fff7ed;
 }
@@ -65,3 +64,14 @@ ul[data-type="taskList"] {
   font-size: 14px;
   line-height: 1.9;
 }
+
+.cm-gutters {
+  border-right: 3px solid #fb923c !important;
+}
+
+/* —— 手动验收清单 ——
+   1. 设置里选择本文件 → h1 变紫、h2 左侧蓝条、代码块绿色虚线框
+   2. 把 h1 的 color 改成 #dc2626 并保存 → 编辑区标题应在约 1 秒内变红
+   3. 清除自定义 CSS → 恢复默认主题
+   4. Ctrl/Cmd+Shift+M 切源码模式 → 背景应为浅橙、行号旁有橙色竖线
+*/

@@ -75,6 +75,18 @@ const cases: Case[] = [
     md: "第一行  \n第二行\n",
   },
   {
+    name: "删除线",
+    md: "这是 ~~删除~~ 文本。\n",
+  },
+  {
+    name: "空段落边界",
+    md: "# 标题\n\n\n\n段落。\n",
+  },
+  {
+    name: "列表中的代码与链接",
+    md: "- 项含 `code`\n- [链接](https://example.com)\n- **粗体项**\n",
+  },
+  {
     name: "综合文档",
     md: `# 标题
 

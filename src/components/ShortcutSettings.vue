@@ -5,13 +5,13 @@ import { storeToRefs } from "pinia";
 import { SHORTCUT_COMMANDS, SHORTCUT_COMMAND_BY_ID, SHORTCUT_GROUP_LABELS, type ShortcutCommand, type ShortcutCommandId, type ShortcutGroup } from "../shortcuts/registry";
 import { displayShortcut, shortcutFromEvent } from "../shortcuts/keyboard";
 import { useShortcutsStore } from "../stores/shortcuts";
-import { useSettingsStore } from "../stores/settings";
+import { useSettingsStore, type ImageStrategy, type ThemeSetting } from "../stores/settings";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const shortcuts = useShortcutsStore();
 const settings = useSettingsStore();
 const { bindings } = storeToRefs(shortcuts);
-const { customCssPath } = storeToRefs(settings);
+const { customCssPath, theme, editorFontSize, autoSaveDelayMs, imageStrategy } = storeToRefs(settings);
 const capturing = ref<ShortcutCommandId | null>(null);
 const message = ref("");
 
@@ -96,6 +96,25 @@ function reloadCustomCssSetting() {
   message.value = "已重新加载自定义 CSS";
 }
 
+function onThemeChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value as ThemeSetting;
+  settings.setTheme(value);
+  message.value = "主题设置已更新";
+}
+
+function onFontSizeInput(event: Event) {
+  settings.patch({ editorFontSize: Number((event.target as HTMLInputElement).value) });
+}
+
+function onAutoSaveInput(event: Event) {
+  settings.patch({ autoSaveDelayMs: Number((event.target as HTMLInputElement).value) });
+}
+
+function onImageStrategyChange(event: Event) {
+  settings.patch({ imageStrategy: (event.target as HTMLSelectElement).value as ImageStrategy });
+  message.value = "图片策略已更新（对新插入图片生效）";
+}
+
 function close() {
   stopCapture();
   emit("close");
@@ -113,10 +132,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="modal-backdrop" @click.self="close">
-    <section class="shortcut-modal" role="dialog" aria-modal="true" aria-label="快捷键设置">
+    <section class="shortcut-modal" role="dialog" aria-modal="true" aria-label="设置">
       <header class="modal-header">
         <div>
-          <h2>快捷键设置</h2>
+          <h2>设置与快捷键</h2>
           <p>修改后立即生效，配置会保存在本机。</p>
         </div>
         <button class="icon-btn" title="关闭" @click="close">×</button>
@@ -126,7 +145,59 @@ onBeforeUnmount(() => {
 
       <div class="shortcut-groups">
         <section class="shortcut-group appearance-settings">
-          <h3>外观</h3>
+          <h3>外观与编辑</h3>
+          <div class="settings-field">
+            <div class="shortcut-command">
+              <strong>主题</strong>
+              <span>浅色 / 深色 / 跟随系统</span>
+            </div>
+            <select class="settings-select" :value="theme" @change="onThemeChange">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <div class="shortcut-command">
+              <strong>正文字号</strong>
+              <span>{{ editorFontSize }}px</span>
+            </div>
+            <input
+              class="settings-range"
+              type="range"
+              min="12"
+              max="28"
+              step="1"
+              :value="editorFontSize"
+              @input="onFontSizeInput"
+            />
+          </div>
+          <div class="settings-field">
+            <div class="shortcut-command">
+              <strong>自动保存延迟</strong>
+              <span>{{ autoSaveDelayMs }}ms</span>
+            </div>
+            <input
+              class="settings-range"
+              type="range"
+              min="300"
+              max="10000"
+              step="100"
+              :value="autoSaveDelayMs"
+              @input="onAutoSaveInput"
+            />
+          </div>
+          <div class="settings-field">
+            <div class="shortcut-command">
+              <strong>图片本地化策略</strong>
+              <span>粘贴/拖入图片时的落盘位置</span>
+            </div>
+            <select class="settings-select" :value="imageStrategy" @change="onImageStrategyChange">
+              <option value="assets-subdir">assets 子目录（推荐）</option>
+              <option value="relative">文档同级目录</option>
+              <option value="absolute">绝对路径（不复制）</option>
+            </select>
+          </div>
           <div class="settings-field">
             <div class="shortcut-command">
               <strong>自定义 CSS</strong>
@@ -156,7 +227,7 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="modal-actions">
-        <button @click="resetAll">恢复全部默认</button>
+        <button @click="resetAll">恢复全部默认快捷键</button>
         <button class="primary" @click="close">完成</button>
       </footer>
     </section>

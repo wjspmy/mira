@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -17,6 +18,13 @@ fn read_text_file(path: String, state: tauri::State<'_, WatcherState>) -> Result
         formats.insert(display_path_string(&target), format);
     }
     Ok(content)
+}
+
+#[tauri::command]
+fn read_file_base64(path: String, state: tauri::State<'_, WatcherState>) -> Result<String, String> {
+    let target = ensure_existing_allowed(Path::new(&path), &state)?;
+    let bytes = fs::read(&target).map_err(|e| e.to_string())?;
+    Ok(BASE64.encode(bytes))
 }
 
 #[derive(Clone, Copy)]
@@ -562,9 +570,21 @@ fn delete_path(path: String, state: tauri::State<'_, WatcherState>) -> Result<()
 }
 
 #[tauri::command]
-fn write_asset(dir: String, name: String, bytes: Vec<u8>, state: tauri::State<'_, WatcherState>) -> Result<String, String> {
+fn write_asset(
+    dir: String,
+    name: String,
+    bytes: Vec<u8>,
+    subdir: Option<String>,
+    state: tauri::State<'_, WatcherState>,
+) -> Result<String, String> {
     let dir = ensure_existing_allowed(Path::new(&dir), &state)?;
-    let assets_dir = ensure_target_allowed(&dir.join("assets"), &state)?;
+    let target_dir = match subdir.as_deref() {
+        Some(".") => ensure_target_allowed(&dir, &state)?,
+        Some("assets") | None => ensure_target_allowed(&dir.join("assets"), &state)?,
+        Some(other) if !other.is_empty() => ensure_target_allowed(&dir.join(other), &state)?,
+        Some(_) => ensure_target_allowed(&dir.join("assets"), &state)?,
+    };
+    let assets_dir = target_dir;
     fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
     let safe_name: String = name
         .chars()
@@ -590,7 +610,11 @@ fn write_asset(dir: String, name: String, bytes: Vec<u8>, state: tauri::State<'_
     }
     fs::write(&target, &bytes).map_err(|e| e.to_string())?;
     let final_name = target.file_name().and_then(|s| s.to_str()).unwrap_or(&safe_name);
-    Ok(format!("./assets/{}", final_name))
+    let rel = match subdir.as_deref() {
+        Some(".") => format!("./{}", final_name),
+        _ => format!("./assets/{}", final_name),
+    };
+    Ok(rel)
 }
 
 #[tauri::command]
@@ -742,6 +766,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             allow_path,
             read_text_file,
+            read_file_base64,
             write_text_file,
             list_dir,
             list_workspace_files,

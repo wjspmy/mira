@@ -40,6 +40,9 @@ import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, re
 import { clearCustomCss, upsertCustomCss } from "./editor/custom-css";
 import { formatDocSizeLabel, isLargeDocument } from "./editor/large-doc";
 import { visualSelectionToMarkdownOffset } from "./editor/mode-bridge";
+import { markdownToHtmlFragment, printHtmlDocument, wrapStandaloneHtml } from "./services/export";
+import { inlineImagesInHtml } from "./services/export-images";
+import { sanitizeExportFileName, withExtension } from "./services/export-name";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
@@ -200,17 +203,25 @@ type ContextMenuState = {
 };
 const contextMenu = ref<ContextMenuState | null>(null);
 
-// 主题：浅/深，持久化到 localStorage，默认跟随系统
-const theme = ref<"light" | "dark">(
-  (localStorage.getItem("mira-theme") as "light" | "dark") ||
-    (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"),
-);
+// 主题：设置项优先，兼容旧 mira-theme；system 跟随系统
+const theme = ref<"light" | "dark">("light");
 function applyTheme(t: string) {
   document.documentElement.dataset.theme = t;
 }
-function toggleTheme() {
-  theme.value = theme.value === "light" ? "dark" : "light";
+function syncThemeFromSettings() {
+  const systemDark = !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  theme.value = settings.resolveTheme(systemDark);
+  applyTheme(theme.value);
 }
+function toggleTheme() {
+  if (settings.theme === "dark") settings.setTheme("light");
+  else if (settings.theme === "light") settings.setTheme("dark");
+  else settings.setTheme(theme.value === "dark" ? "light" : "dark");
+  syncThemeFromSettings();
+}
+watch(() => settings.theme, syncThemeFromSettings);
+window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", syncThemeFromSettings);
+syncThemeFromSettings();
 
 function focusVisualEditor() {
   // 保持 Tiptap 自身选区，避免模式切换时被强制跳到文末。
@@ -349,9 +360,19 @@ function handlePaletteQueryChange(query: string) {
 }
 watch(theme, (t) => {
   applyTheme(t);
-  localStorage.setItem("mira-theme", t);
 });
 applyTheme(theme.value);
+
+watch(
+  () => [settings.editorFontSize, settings.editorFontFamily],
+  () => {
+    const root = document.documentElement;
+    root.style.setProperty("--editor-font-size", `${settings.editorFontSize}px`);
+    if (settings.editorFontFamily) root.style.setProperty("--font-body", settings.editorFontFamily);
+    else root.style.removeProperty("--font-body");
+  },
+  { immediate: true },
+);
 
 const lowlight = createLowlight(common);
 const MiraCodeBlockLowlight = CodeBlockLowlight.extend({
@@ -933,7 +954,7 @@ function scheduleAutosave() {
     } catch (e) {
       status.value = `自动保存失败：${e}`;
     }
-  }, 1000);
+  }, settings.autoSaveDelayMs);
 }
 
 watch([filePath, dirty], () => {
@@ -1275,6 +1296,72 @@ function insertLink() {
   else chain.unsetLink().run();
 }
 
+function currentExportMarkdown(): string {
+  if (editorMode.mode === "source") {
+    sourceEditorRef.value?.flushPendingChange();
+    return session.activeDoc?.rawMd || "";
+  }
+  return getMarkdown();
+}
+
+function currentExportTitle(): string {
+  const doc = session.activeDoc;
+  if (!doc) return "untitled";
+  return doc.filePath ? basename(doc.filePath).replace(/\.md$/i, "") : "untitled";
+}
+
+async function exportHtml() {
+  const doc = session.activeDoc;
+  if (!doc) {
+    status.value = "没有可导出的文档";
+    return;
+  }
+  const md = currentExportMarkdown();
+  const title = currentExportTitle();
+  try {
+    status.value = "正在准备导出…";
+    let fragment = markdownToHtmlFragment(md);
+    fragment = await inlineImagesInHtml(fragment, doc.filePath ? dirname(doc.filePath) : null);
+    const html = wrapStandaloneHtml(fragment, { title, theme: theme.value });
+    const defaultName = withExtension(sanitizeExportFileName(title), ".html");
+    const target = await saveDialog({
+      defaultPath: defaultName,
+      filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+    });
+    if (!target) {
+      status.value = "已取消导出";
+      return;
+    }
+    const path = normalizeNativePath(typeof target === "string" ? target : (target as any).path);
+    if (!path) return;
+    await invoke("allow_path", { path });
+    await invoke("write_text_file", { path, content: html });
+    status.value = `已导出 HTML ${path}`;
+  } catch (e) {
+    status.value = `导出 HTML 失败：${e}`;
+  }
+}
+
+async function exportPdf() {
+  const doc = session.activeDoc;
+  if (!doc) {
+    status.value = "没有可导出的文档";
+    return;
+  }
+  try {
+    status.value = "正在准备导出…";
+    const md = currentExportMarkdown();
+    const title = currentExportTitle();
+    let fragment = markdownToHtmlFragment(md);
+    fragment = await inlineImagesInHtml(fragment, doc.filePath ? dirname(doc.filePath) : null);
+    const html = wrapStandaloneHtml(fragment, { title, theme: theme.value });
+    if (printHtmlDocument(html)) status.value = "已打开打印对话框（可另存为 PDF）";
+    else status.value = "打印导出失败";
+  } catch (e) {
+    status.value = `导出 PDF 失败：${e}`;
+  }
+}
+
 async function executeShortcut(commandId: ShortcutCommandId) {
   const tabIndex = commandId.match(/^tab([1-9])$/)?.[1];
   if (tabIndex) {
@@ -1287,6 +1374,8 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     openFile: () => openFile(),
     openFolder,
     saveFile: saveCurrentFile,
+    exportHtml,
+    exportPdf,
     closeTab: closeActiveDoc,
     nextTab: () => switchTabByOffset(1),
     prevTab: () => switchTabByOffset(-1),

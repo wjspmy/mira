@@ -14,6 +14,7 @@ const { bindings } = storeToRefs(shortcuts);
 const { customCssPath, theme, editorFontSize, autoSaveDelayMs, imageStrategy } = storeToRefs(settings);
 const capturing = ref<ShortcutCommandId | null>(null);
 const message = ref("");
+const activeTab = ref<"general" | "shortcuts">("general");
 
 const groupedCommands = computed(() => {
   const groups: Array<{ group: ShortcutGroup; label: string; commands: ShortcutCommand[] }> = [];
@@ -27,6 +28,12 @@ const groupedCommands = computed(() => {
   }
   return groups;
 });
+
+function switchTab(tab: "general" | "shortcuts") {
+  activeTab.value = tab;
+  stopCapture();
+  message.value = "";
+}
 
 function startCapture(commandId: ShortcutCommandId) {
   capturing.value = commandId;
@@ -135,17 +142,40 @@ onBeforeUnmount(() => {
     <section class="shortcut-modal" role="dialog" aria-modal="true" aria-label="设置">
       <header class="modal-header">
         <div>
-          <h2>设置与快捷键</h2>
+          <h2>设置</h2>
           <p>修改后立即生效，配置会保存在本机。</p>
         </div>
         <button class="icon-btn" title="关闭" @click="close">×</button>
       </header>
 
+      <div class="settings-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          class="settings-tab"
+          :class="{ active: activeTab === 'general' }"
+          :aria-selected="activeTab === 'general'"
+          @click="switchTab('general')"
+        >
+          通用
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="settings-tab"
+          :class="{ active: activeTab === 'shortcuts' }"
+          :aria-selected="activeTab === 'shortcuts'"
+          @click="switchTab('shortcuts')"
+        >
+          快捷键
+        </button>
+      </div>
+
       <div v-if="message" class="shortcut-message">{{ message }}</div>
 
-      <div class="shortcut-groups">
+      <div v-if="activeTab === 'general'" class="shortcut-groups">
         <section class="shortcut-group appearance-settings">
-          <h3>外观与编辑</h3>
+          <h3>外观</h3>
           <div class="settings-field">
             <div class="shortcut-command">
               <strong>主题</strong>
@@ -174,6 +204,20 @@ onBeforeUnmount(() => {
           </div>
           <div class="settings-field">
             <div class="shortcut-command">
+              <strong>自定义 CSS</strong>
+              <span>作用于编辑区和源码区，文件变更会热加载。</span>
+            </div>
+            <code class="settings-path" :title="customCssPath || '未选择'">{{ customCssPath || "未选择" }}</code>
+            <button @click="chooseCustomCss">选择文件</button>
+            <button @click="reloadCustomCssSetting">重新加载</button>
+            <button @click="clearCustomCssSetting">清除</button>
+          </div>
+        </section>
+
+        <section class="shortcut-group">
+          <h3>编辑</h3>
+          <div class="settings-field">
+            <div class="shortcut-command">
               <strong>自动保存延迟</strong>
               <span>{{ autoSaveDelayMs }}ms</span>
             </div>
@@ -190,7 +234,7 @@ onBeforeUnmount(() => {
           <div class="settings-field">
             <div class="shortcut-command">
               <strong>图片本地化策略</strong>
-              <span>粘贴/拖入图片时的落盘位置</span>
+              <span>粘贴 / 拖入图片时的落盘位置</span>
             </div>
             <select class="settings-select" :value="imageStrategy" @change="onImageStrategyChange">
               <option value="assets-subdir">assets 子目录（推荐）</option>
@@ -198,18 +242,10 @@ onBeforeUnmount(() => {
               <option value="absolute">绝对路径（不复制）</option>
             </select>
           </div>
-          <div class="settings-field">
-            <div class="shortcut-command">
-              <strong>自定义 CSS</strong>
-              <span>选择本机 CSS 文件后，会作用于编辑区和源码编辑区，配置保存在本机。</span>
-            </div>
-            <code class="settings-path" :title="customCssPath || '未选择'">{{ customCssPath || "未选择" }}</code>
-            <button @click="chooseCustomCss">选择文件</button>
-            <button @click="reloadCustomCssSetting">重新加载</button>
-            <button @click="clearCustomCssSetting">清除</button>
-          </div>
         </section>
+      </div>
 
+      <div v-else class="shortcut-groups">
         <section v-for="group in groupedCommands" :key="group.group" class="shortcut-group">
           <h3>{{ group.label }}</h3>
           <div class="shortcut-row" v-for="command in group.commands" :key="command.id">
@@ -227,7 +263,7 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="modal-actions">
-        <button @click="resetAll">恢复全部默认快捷键</button>
+        <button v-if="activeTab === 'shortcuts'" @click="resetAll">恢复全部默认快捷键</button>
         <button class="primary" @click="close">完成</button>
       </footer>
     </section>

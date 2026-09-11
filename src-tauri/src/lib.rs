@@ -27,6 +27,18 @@ fn read_file_base64(path: String, state: tauri::State<'_, WatcherState>) -> Resu
     Ok(BASE64.encode(bytes))
 }
 
+#[tauri::command]
+fn write_file_bytes(path: String, bytes: Vec<u8>, state: tauri::State<'_, WatcherState>) -> Result<(), String> {
+    let target = ensure_target_allowed(Path::new(&path), &state)?;
+    if let Ok(mut rw) = state.recent_writes.lock() {
+        rw.insert(display_path_string(&target), std::time::Instant::now());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&target, &bytes).map_err(|e| e.to_string())
+}
+
 #[derive(Clone, Copy)]
 enum TextEncoding {
     Utf8,
@@ -767,6 +779,7 @@ pub fn run() {
             allow_path,
             read_text_file,
             read_file_base64,
+            write_file_bytes,
             write_text_file,
             list_dir,
             list_workspace_files,

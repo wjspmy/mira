@@ -49,6 +49,10 @@ function recentItems(recentPaths: string[]): AppMenuItem[] {
   }));
 }
 
+/**
+ * Typora 风格菜单：文件 / 编辑 / 格式 / 视图 / 工具 / 帮助。
+ * 「设置」独立入口（含通用偏好 + 快捷键），不再混在「快捷键设置」里。
+ */
 export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
   const { recentPaths, shortcuts, hasActiveDoc, hasOpenTabs } = state;
   const editorMode = state.editorMode ?? "visual";
@@ -58,12 +62,26 @@ export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
       label: "文件",
       items: [
         { id: "newDoc", label: "新建", shortcut: shortcut(shortcuts, "newDoc") },
-        { id: "openFile", label: "打开文件", shortcut: shortcut(shortcuts, "openFile") },
-        { id: "openFolder", label: "打开文件夹", shortcut: shortcut(shortcuts, "openFolder") },
-        { id: "saveFile", label: "保存", shortcut: shortcut(shortcuts, "saveFile"), disabled: !hasActiveDoc, separatorBefore: true },
-        { id: "exportHtml", label: "导出 HTML…", shortcut: shortcut(shortcuts, "exportHtml"), disabled: !hasActiveDoc },
-        { id: "exportPdf", label: "导出 PDF…", shortcut: shortcut(shortcuts, "exportPdf"), disabled: !hasActiveDoc },
-        { id: "closeTab", label: "关闭标签", shortcut: shortcut(shortcuts, "closeTab"), disabled: !hasOpenTabs, separatorBefore: true },
+        { id: "openFile", label: "打开文件…", shortcut: shortcut(shortcuts, "openFile") },
+        { id: "openFolder", label: "打开文件夹…", shortcut: shortcut(shortcuts, "openFolder") },
+        {
+          id: "saveFile",
+          label: "保存",
+          shortcut: shortcut(shortcuts, "saveFile"),
+          disabled: !hasActiveDoc,
+          separatorBefore: true,
+        },
+        { id: "exportHtml", label: "导出 HTML…", disabled: !hasActiveDoc, separatorBefore: true },
+        { id: "exportPdf", label: "导出 PDF…", disabled: !hasActiveDoc },
+        { id: "exportDoc", label: "导出 Word (.doc)…", disabled: !hasActiveDoc },
+        { id: "exportPng", label: "导出 PNG…", disabled: !hasActiveDoc },
+        {
+          id: "closeTab",
+          label: "关闭标签",
+          shortcut: shortcut(shortcuts, "closeTab"),
+          disabled: !hasOpenTabs,
+          separatorBefore: true,
+        },
         { label: "最近打开", section: true, separatorBefore: true },
         ...recentItems(recentPaths),
       ],
@@ -74,36 +92,75 @@ export function buildAppMenuGroups(state: AppMenuState): AppMenuGroup[] {
       items: [
         { id: "undo", label: "撤销", disabled: !hasActiveDoc },
         { id: "redo", label: "重做", disabled: !hasActiveDoc },
+        { id: "toggleBold", label: "加粗", shortcut: shortcut(shortcuts, "toggleBold"), disabled: !hasActiveDoc, separatorBefore: true },
+        { id: "toggleItalic", label: "斜体", shortcut: shortcut(shortcuts, "toggleItalic"), disabled: !hasActiveDoc },
+        { id: "toggleInlineCode", label: "行内代码", shortcut: shortcut(shortcuts, "toggleInlineCode"), disabled: !hasActiveDoc },
+        { id: "insertLink", label: "插入链接…", shortcut: shortcut(shortcuts, "insertLink"), disabled: !hasActiveDoc },
+        {
+          id: "findInDocument",
+          label: "查找…",
+          shortcut: shortcut(shortcuts, "findInDocument"),
+          disabled: !hasActiveDoc,
+          separatorBefore: true,
+        },
+        {
+          id: "replaceInDocument",
+          label: "替换…",
+          shortcut: shortcut(shortcuts, "replaceInDocument"),
+          disabled: !hasActiveDoc,
+        },
       ],
     },
     {
       id: "format",
       label: "格式",
       items: [
-        { id: "toggleBold", label: "加粗", shortcut: shortcut(shortcuts, "toggleBold"), disabled: !hasActiveDoc },
-        { id: "toggleItalic", label: "斜体", shortcut: shortcut(shortcuts, "toggleItalic"), disabled: !hasActiveDoc },
-        { id: "toggleInlineCode", label: "行内代码", shortcut: shortcut(shortcuts, "toggleInlineCode"), disabled: !hasActiveDoc },
-        { id: "insertLink", label: "插入链接", shortcut: shortcut(shortcuts, "insertLink"), disabled: !hasActiveDoc },
-        { id: "toggleBulletList", label: "无序列表", shortcut: shortcut(shortcuts, "toggleBulletList"), disabled: !hasActiveDoc, separatorBefore: true },
-        { id: "toggleOrderedList", label: "有序列表", shortcut: shortcut(shortcuts, "toggleOrderedList"), disabled: !hasActiveDoc },
-        { id: "toggleBlockquote", label: "引用", shortcut: shortcut(shortcuts, "toggleBlockquote"), disabled: !hasActiveDoc },
-        { id: "toggleCodeBlock", label: "代码块", shortcut: shortcut(shortcuts, "toggleCodeBlock"), disabled: !hasActiveDoc },
+        { id: "toggleBulletList", label: "无序列表", disabled: !hasActiveDoc },
+        { id: "toggleOrderedList", label: "有序列表", disabled: !hasActiveDoc },
+        { id: "toggleBlockquote", label: "引用", disabled: !hasActiveDoc },
+        { id: "toggleCodeBlock", label: "代码块", disabled: !hasActiveDoc },
       ],
     },
     {
       id: "view",
       label: "视图",
       items: [
-        { id: "toggleSourceMode", label: editorMode === "source" ? "切换到所见即所得" : "切换到源码模式", shortcut: shortcut(shortcuts, "toggleSourceMode"), active: editorMode === "source" },
-        { id: "toggleTheme", label: "切换浅色/深色主题", shortcut: shortcut(shortcuts, "toggleTheme") },
+        {
+          id: "toggleOutline",
+          label: "大纲",
+          shortcut: shortcut(shortcuts, "toggleOutline"),
+        },
+        {
+          id: "toggleSourceMode",
+          label: editorMode === "source" ? "所见即所得" : "源码模式",
+          shortcut: shortcut(shortcuts, "toggleSourceMode"),
+          active: editorMode === "source",
+          separatorBefore: true,
+        },
+        {
+          id: "toggleTheme",
+          label: "切换浅色/深色",
+          shortcut: shortcut(shortcuts, "toggleTheme"),
+          separatorBefore: true,
+        },
       ],
     },
     {
       id: "tools",
       label: "工具",
       items: [
-        { id: "openCommandPalette", label: "命令面板", shortcut: shortcut(shortcuts, "openCommandPalette") },
-        { id: "openShortcutSettings", label: "快捷键设置", shortcut: shortcut(shortcuts, "openShortcutSettings"), separatorBefore: true },
+        {
+          id: "openCommandPalette",
+          label: "命令面板",
+          shortcut: shortcut(shortcuts, "openCommandPalette"),
+        },
+        {
+          id: "openSettings",
+          label: "设置…",
+          shortcut: shortcut(shortcuts, "openSettings"),
+          separatorBefore: true,
+          title: "主题、字号、自动保存、图片策略、自定义 CSS、快捷键",
+        },
       ],
     },
     {

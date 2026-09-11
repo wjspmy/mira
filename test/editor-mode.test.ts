@@ -51,9 +51,10 @@ it("exposes the source-mode toggle through the view menu", () => {
     hasOpenTabs: true,
     editorMode: "visual",
   });
-  expect(visual.find((group) => group.id === "view")?.items[0]).toMatchObject({
+  const viewItems = visual.find((group) => group.id === "view")?.items ?? [];
+  expect(viewItems.find((item) => item.id === "toggleSourceMode")).toMatchObject({
     id: "toggleSourceMode",
-    label: "切换到源码模式",
+    label: "源码模式",
     shortcut: "Ctrl + Shift + M",
     active: false,
   });
@@ -65,8 +66,9 @@ it("exposes the source-mode toggle through the view menu", () => {
     hasOpenTabs: true,
     editorMode: "source",
   });
-  expect(source.find((group) => group.id === "view")?.items[0]).toMatchObject({
-    label: "切换到所见即所得",
+  const sourceView = source.find((group) => group.id === "view")?.items ?? [];
+  expect(sourceView.find((item) => item.id === "toggleSourceMode")).toMatchObject({
+    label: "所见即所得",
     active: true,
   });
 });

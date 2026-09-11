@@ -36,6 +36,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import { MathInline, MathBlock, mathPlugin } from "./math";
+import { GithubAlertBlockquote } from "./github-alert";
 
 const lowlight = createLowlight(common);
 
@@ -48,7 +49,8 @@ function ensureEditor(): Editor {
   if (!_editor) {
     _editor = new Editor({
       extensions: [
-        StarterKit.configure({ codeBlock: false }),
+        StarterKit.configure({ codeBlock: false, blockquote: false }),
+        GithubAlertBlockquote,
         CodeBlockLowlight.configure({ lowlight }),
         Table, TableRow, TableHeader, TableCell,
         TaskList, TaskItem.configure({ nested: true }),

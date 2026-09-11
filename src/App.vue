@@ -31,7 +31,16 @@ import Tabs from "./components/Tabs.vue";
 import ShortcutSettings from "./components/ShortcutSettings.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import SourceEditor from "./components/SourceEditor.vue";
+import OutlinePanel from "./components/OutlinePanel.vue";
+import FindReplace from "./components/FindReplace.vue";
+import EditorToolbar from "./components/EditorToolbar.vue";
 import AppMenuBar from "./components/AppMenuBar.vue";
+import { GithubAlertBlockquote } from "./editor/github-alert";
+import { buildAlertBlockquote, type EditorToolbarAction, type GithubAlertType } from "./editor/toolbar";
+import { extractOutline, type OutlineItem } from "./editor/outline";
+import { countDocumentStats, formatStatsLabel } from "./editor/stats";
+import { findMatches, nextMatchIndex, replaceAllMatches } from "./editor/find-replace";
+import { collectSourceMatches, collectVisualMatches, revealVisualMatch } from "./editor/find-in-editor";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask, message as messageDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -40,9 +49,10 @@ import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, re
 import { clearCustomCss, upsertCustomCss } from "./editor/custom-css";
 import { formatDocSizeLabel, isLargeDocument } from "./editor/large-doc";
 import { visualSelectionToMarkdownOffset } from "./editor/mode-bridge";
-import { markdownToHtmlFragment, printHtmlDocument, wrapStandaloneHtml } from "./services/export";
+import { markdownToHtmlFragment, printHtmlDocument, wrapStandaloneHtml, wrapWordDocument, base64ToBytes } from "./services/export";
 import { inlineImagesInHtml } from "./services/export-images";
 import { sanitizeExportFileName, withExtension } from "./services/export-name";
+import { toPng } from "html-to-image";
 
 const ws = useWorkspaceStore();
 const session = useSessionStore();
@@ -53,6 +63,14 @@ const settings = useSettingsStore();
 const status = ref("就绪");
 const showShortcutSettings = ref(false);
 const showCommandPalette = ref(false);
+const showOutline = ref(localStorage.getItem("mira-outline") === "1");
+const showFindReplace = ref(false);
+const findShowReplaceRow = ref(false);
+const findQuery = ref("");
+const findReplacement = ref("");
+const findUseRegex = ref(false);
+const findCaseSensitive = ref(false);
+const findIndex = ref(-1);
 const sourceEditorRef = ref<InstanceType<typeof SourceEditor> | null>(null);
 const paletteWorkspacePaths = ref<string[]>([]);
 const paletteLoading = ref(false);
@@ -282,7 +300,7 @@ async function openFolder() {
   if (path) status.value = `已打开文件夹 ${path}`;
 }
 
-function openShortcutSettings() {
+function openSettings() {
   closeContextMenu();
   showShortcutSettings.value = true;
 }
@@ -445,7 +463,8 @@ function setEditorContent(id: string, md: string, resetHistory = true) {
 function createDocEditor(doc: Doc): Editor {
   const ed = new Editor({
     extensions: [
-      StarterKit.configure({ codeBlock: false }),
+      StarterKit.configure({ codeBlock: false, blockquote: false }),
+      GithubAlertBlockquote,
       MiraCodeBlockLowlight.configure({ lowlight }),
       Table,
       TableRow,
@@ -550,6 +569,217 @@ const hasActiveDoc = computed(() => !!session.activeDoc);
 const hasOpenTabs = computed(() => session.docs.length > 0);
 const currentPathLabel = computed(() => filePath.value ?? "未命名");
 const saveStateLabel = computed(() => dirty.value ? "● 未保存" : "已保存");
+
+const currentMarkdownSnapshot = computed(() => {
+  if (!session.activeDoc) return "";
+  if (editorMode.mode === "source") return session.activeDoc.rawMd;
+  return markdownFromEditor(editorForDoc(session.activeDoc.id)) || session.activeDoc.rawMd;
+});
+
+const outlineItems = computed(() => extractOutline(currentMarkdownSnapshot.value));
+const docStats = computed(() => countDocumentStats(currentMarkdownSnapshot.value));
+const statsLabel = computed(() => formatStatsLabel(docStats.value));
+
+const findMatchList = computed(() =>
+  findMatches(currentMarkdownSnapshot.value, findQuery.value, {
+    useRegex: findUseRegex.value,
+    caseSensitive: findCaseSensitive.value,
+  }),
+);
+
+/** 传给查找条的匹配数：源码用 Markdown，所见即所得用 PM 文本节点 */
+const findMatchCount = computed(() => {
+  if (!findQuery.value) return 0;
+  if (editorMode.mode === "source") return findMatchList.value.length;
+  return currentVisualMatches().length;
+});
+
+function toggleOutline() {
+  showOutline.value = !showOutline.value;
+  localStorage.setItem("mira-outline", showOutline.value ? "1" : "0");
+}
+
+function openFind(withReplace = false) {
+  if (!session.activeDoc) {
+    status.value = "没有可查找的文档";
+    return;
+  }
+  // 若当前有选区，预填查找词（Typora / Notepad++ 习惯）
+  if (!findQuery.value) {
+    if (editorMode.mode === "source") {
+      // 源码模式暂不自动取选区
+    } else {
+      const ed = activeEditor.value;
+      const selected = ed?.state.doc.textBetween(ed.state.selection.from, ed.state.selection.to, " ");
+      if (selected && selected.length <= 200) findQuery.value = selected;
+    }
+  }
+  findShowReplaceRow.value = withReplace;
+  showFindReplace.value = true;
+  findIndex.value = -1;
+}
+
+function openFindOnly() {
+  openFind(false);
+}
+
+function openFindAndReplace() {
+  openFind(true);
+}
+
+function closeFindReplace() {
+  showFindReplace.value = false;
+}
+
+// 输入查找词时自动跳到第一处（VS Code 行为）
+watch(findQuery, () => {
+  findIndex.value = -1;
+  if (showFindReplace.value && findQuery.value) {
+    void nextTick(() => gotoFindMatch(1));
+  }
+});
+watch(findUseRegex, () => {
+  findIndex.value = -1;
+});
+watch(findCaseSensitive, () => {
+  findIndex.value = -1;
+});
+
+function scrollToMarkdownOffset(item: OutlineItem) {
+  if (editorMode.mode === "source") {
+    sourceEditorRef.value?.scrollToOffset(item.offset);
+    return;
+  }
+  const ed = editorForDoc(session.activeId);
+  if (!ed) return;
+  // 在 ProseMirror 文档中按标题文本定位
+  let pos: number | null = null;
+  ed.state.doc.descendants((node, nodePos) => {
+    if (pos !== null) return false;
+    if (node.type.name === "heading") {
+      const text = node.textContent.trim();
+      if (text === item.text) {
+        pos = nodePos;
+        return false;
+      }
+    }
+    return true;
+  });
+  if (pos === null) {
+    status.value = "未在所见即所得视图中找到该标题";
+    return;
+  }
+  ed.commands.setTextSelection(Math.min(pos + 1, ed.state.doc.content.size));
+  ed.commands.focus();
+  const dom = ed.view.domAtPos(Math.min(pos + 1, ed.state.doc.content.size)).node;
+  const el = dom.nodeType === 1 ? (dom as HTMLElement) : dom.parentElement;
+  el?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+/** 所见即所得：在 PM 文本节点中收集可精确定位的匹配 */
+function currentVisualMatches() {
+  const ed = editorForDoc(session.activeId);
+  if (!ed || !findQuery.value) return [];
+  return collectVisualMatches(ed, findQuery.value, {
+    useRegex: findUseRegex.value,
+    caseSensitive: findCaseSensitive.value,
+  });
+}
+
+function gotoFindMatch(delta: 1 | -1) {
+  if (!findQuery.value) return;
+  if (editorMode.mode === "source") {
+    const matches = collectSourceMatches(currentMarkdownSnapshot.value, findQuery.value, {
+      useRegex: findUseRegex.value,
+      caseSensitive: findCaseSensitive.value,
+    });
+    if (!matches.length) {
+      findIndex.value = -1;
+      status.value = "无结果";
+      return;
+    }
+    findIndex.value = nextMatchIndex(findIndex.value, matches.length, delta);
+    const match = matches[findIndex.value];
+    if (match) sourceEditorRef.value?.scrollToOffset(match.index, match.length);
+    return;
+  }
+
+  const visualMatches = currentVisualMatches();
+  if (!visualMatches.length) {
+    findIndex.value = -1;
+    status.value = "无结果";
+    return;
+  }
+  findIndex.value = nextMatchIndex(findIndex.value, visualMatches.length, delta);
+  const match = visualMatches[findIndex.value];
+  const ed = editorForDoc(session.activeId);
+  if (match && ed) revealVisualMatch(ed, match);
+}
+
+function applyReplaceAll() {
+  if (!session.activeDoc || !findQuery.value) return;
+  const source = currentMarkdownSnapshot.value;
+  const result = replaceAllMatches(source, findQuery.value, findReplacement.value, {
+    useRegex: findUseRegex.value,
+    caseSensitive: findCaseSensitive.value,
+  });
+  if (!result.count) {
+    status.value = "无匹配";
+    return;
+  }
+  session.activeDoc.rawMd = result.text;
+  session.activeDoc.dirty = true;
+  if (editorMode.mode === "source") {
+    // SourceEditor 通过 modelValue 同步
+  } else {
+    setEditorContent(session.activeDoc.id, result.text, true);
+  }
+  saveDraftForDoc(session.activeDoc);
+  scheduleAutosave();
+  findIndex.value = -1;
+  status.value = `已替换 ${result.count} 处`;
+}
+
+function applyReplaceOne() {
+  if (!session.activeDoc || !findQuery.value) return;
+  if (editorMode.mode === "visual") {
+    const visualMatches = currentVisualMatches();
+    if (!visualMatches.length) {
+      status.value = "无结果";
+      return;
+    }
+    findIndex.value = nextMatchIndex(findIndex.value, visualMatches.length, 1);
+    const match = visualMatches[findIndex.value];
+    const ed = editorForDoc(session.activeId);
+    if (!match || !ed) return;
+    revealVisualMatch(ed, match);
+    ed.chain().deleteRange({ from: match.from, to: match.to }).insertContent(findReplacement.value).focus().run();
+    session.activeDoc.rawMd = markdownFromEditor(ed);
+    session.activeDoc.dirty = true;
+    saveDraftForDoc(session.activeDoc);
+    scheduleAutosave();
+    status.value = `已替换第 ${findIndex.value + 1} 处`;
+    return;
+  }
+
+  const matches = collectSourceMatches(currentMarkdownSnapshot.value, findQuery.value, {
+    useRegex: findUseRegex.value,
+    caseSensitive: findCaseSensitive.value,
+  });
+  if (!matches.length) return;
+  findIndex.value = nextMatchIndex(findIndex.value, matches.length, 1);
+  const match = matches[findIndex.value];
+  if (!match) return;
+  sourceEditorRef.value?.scrollToOffset(match.index, match.length);
+  const source = currentMarkdownSnapshot.value;
+  const next = source.slice(0, match.index) + findReplacement.value + source.slice(match.index + match.length);
+  session.activeDoc.rawMd = next;
+  session.activeDoc.dirty = true;
+  saveDraftForDoc(session.activeDoc);
+  scheduleAutosave();
+  status.value = `已替换第 ${findIndex.value + 1} 处`;
+}
+
 const menuShortcutLabels = computed<Partial<Record<ShortcutCommandId, string>>>(() => {
   const result: Partial<Record<ShortcutCommandId, string>> = {};
   for (const command of SHORTCUT_COMMANDS) {
@@ -1296,6 +1526,82 @@ function insertLink() {
   else chain.unsetLink().run();
 }
 
+function insertGithubAlert(type: GithubAlertType) {
+  const ed = activeEditor.value as any;
+  if (!ed) return;
+  const md = buildAlertBlockquote(type);
+  ed.chain().focus().insertContent(md).run();
+}
+
+function handleToolbarAction(action: EditorToolbarAction) {
+  const ed = activeEditor.value as any;
+  switch (action) {
+    case "heading1":
+      ed?.chain().focus().toggleHeading({ level: 1 }).run();
+      break;
+    case "heading2":
+      ed?.chain().focus().toggleHeading({ level: 2 }).run();
+      break;
+    case "heading3":
+      ed?.chain().focus().toggleHeading({ level: 3 }).run();
+      break;
+    case "bold":
+      runEditorCommand("toggleBold");
+      break;
+    case "italic":
+      runEditorCommand("toggleItalic");
+      break;
+    case "strike":
+      runEditorCommand("toggleStrike");
+      break;
+    case "code":
+      runEditorCommand("toggleCode");
+      break;
+    case "link":
+      insertLink();
+      break;
+    case "bulletList":
+      runEditorCommand("toggleBulletList");
+      break;
+    case "orderedList":
+      runEditorCommand("toggleOrderedList");
+      break;
+    case "taskList":
+      ed?.chain().focus().toggleTaskList().run();
+      break;
+    case "blockquote":
+      runEditorCommand("toggleBlockquote");
+      break;
+    case "codeBlock":
+      runEditorCommand("toggleCodeBlock");
+      break;
+    case "hr":
+      ed?.chain().focus().setHorizontalRule().run();
+      break;
+    case "insertTable":
+      ed?.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run();
+      break;
+    case "alertNote":
+      insertGithubAlert("NOTE");
+      break;
+    case "alertWarning":
+      insertGithubAlert("WARNING");
+      break;
+    case "alertTip":
+      insertGithubAlert("TIP");
+      break;
+  }
+  if (editorMode.mode === "visual" && session.activeDoc) {
+    const live = editorForDoc(session.activeDoc.id);
+    if (live) {
+      session.activeDoc.rawMd = markdownFromEditor(live);
+      session.activeDoc.dirty = true;
+      saveDraftForDoc(session.activeDoc);
+      scheduleAutosave();
+    }
+  }
+}
+
 function currentExportMarkdown(): string {
   if (editorMode.mode === "source") {
     sourceEditorRef.value?.flushPendingChange();
@@ -1310,29 +1616,38 @@ function currentExportTitle(): string {
   return doc.filePath ? basename(doc.filePath).replace(/\.md$/i, "") : "untitled";
 }
 
-async function exportHtml() {
+async function prepareExportFragment(): Promise<{ fragment: string; title: string; docDir: string | null } | null> {
   const doc = session.activeDoc;
   if (!doc) {
     status.value = "没有可导出的文档";
-    return;
+    return null;
   }
+  status.value = "正在准备导出…";
   const md = currentExportMarkdown();
   const title = currentExportTitle();
+  const docDir = doc.filePath ? dirname(doc.filePath) : null;
+  let fragment = markdownToHtmlFragment(md);
+  fragment = await inlineImagesInHtml(fragment, docDir);
+  return { fragment, title, docDir };
+}
+
+async function pickExportPath(defaultName: string, filters: { name: string; extensions: string[] }[]): Promise<string | null> {
+  const target = await saveDialog({ defaultPath: defaultName, filters });
+  if (!target) {
+    status.value = "已取消导出";
+    return null;
+  }
+  return normalizeNativePath(typeof target === "string" ? target : (target as any).path);
+}
+
+async function exportHtml() {
   try {
-    status.value = "正在准备导出…";
-    let fragment = markdownToHtmlFragment(md);
-    fragment = await inlineImagesInHtml(fragment, doc.filePath ? dirname(doc.filePath) : null);
-    const html = wrapStandaloneHtml(fragment, { title, theme: theme.value });
-    const defaultName = withExtension(sanitizeExportFileName(title), ".html");
-    const target = await saveDialog({
-      defaultPath: defaultName,
-      filters: [{ name: "HTML", extensions: ["html", "htm"] }],
-    });
-    if (!target) {
-      status.value = "已取消导出";
-      return;
-    }
-    const path = normalizeNativePath(typeof target === "string" ? target : (target as any).path);
+    const prepared = await prepareExportFragment();
+    if (!prepared) return;
+    const html = wrapStandaloneHtml(prepared.fragment, { title: prepared.title, theme: theme.value });
+    const path = await pickExportPath(withExtension(sanitizeExportFileName(prepared.title), ".html"), [
+      { name: "HTML", extensions: ["html", "htm"] },
+    ]);
     if (!path) return;
     await invoke("allow_path", { path });
     await invoke("write_text_file", { path, content: html });
@@ -1343,22 +1658,55 @@ async function exportHtml() {
 }
 
 async function exportPdf() {
-  const doc = session.activeDoc;
-  if (!doc) {
-    status.value = "没有可导出的文档";
-    return;
-  }
   try {
-    status.value = "正在准备导出…";
-    const md = currentExportMarkdown();
-    const title = currentExportTitle();
-    let fragment = markdownToHtmlFragment(md);
-    fragment = await inlineImagesInHtml(fragment, doc.filePath ? dirname(doc.filePath) : null);
-    const html = wrapStandaloneHtml(fragment, { title, theme: theme.value });
+    const prepared = await prepareExportFragment();
+    if (!prepared) return;
+    const html = wrapStandaloneHtml(prepared.fragment, { title: prepared.title, theme: theme.value });
     if (printHtmlDocument(html)) status.value = "已打开打印对话框（可另存为 PDF）";
     else status.value = "打印导出失败";
   } catch (e) {
     status.value = `导出 PDF 失败：${e}`;
+  }
+}
+
+async function exportDoc() {
+  try {
+    const prepared = await prepareExportFragment();
+    if (!prepared) return;
+    const html = wrapWordDocument(prepared.fragment, { title: prepared.title });
+    const path = await pickExportPath(withExtension(sanitizeExportFileName(prepared.title), ".doc"), [
+      { name: "Word", extensions: ["doc"] },
+    ]);
+    if (!path) return;
+    await invoke("allow_path", { path });
+    await invoke("write_text_file", { path, content: html });
+    status.value = `已导出 Word ${path}`;
+  } catch (e) {
+    status.value = `导出 Word 失败：${e}`;
+  }
+}
+
+async function exportPng() {
+  try {
+    const prepared = await prepareExportFragment();
+    if (!prepared) return;
+    const html = wrapStandaloneHtml(prepared.fragment, { title: prepared.title, theme: "light" });
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:-10000px;top:0;width:820px;background:#fff;color:#1f2328;padding:32px;";
+    host.innerHTML = html.match(/<article[\s\S]*<\/article>/)?.[0] || prepared.fragment;
+    document.body.appendChild(host);
+    const dataUrl = await toPng(host, { cacheBust: true, pixelRatio: 2, backgroundColor: "#ffffff" });
+    host.remove();
+    const path = await pickExportPath(withExtension(sanitizeExportFileName(prepared.title), ".png"), [
+      { name: "PNG", extensions: ["png"] },
+    ]);
+    if (!path) return;
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+    await invoke("allow_path", { path });
+    await invoke("write_file_bytes", { path, bytes: Array.from(base64ToBytes(base64)) });
+    status.value = `已导出 PNG ${path}`;
+  } catch (e) {
+    status.value = `导出 PNG 失败：${e}`;
   }
 }
 
@@ -1376,6 +1724,8 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     saveFile: saveCurrentFile,
     exportHtml,
     exportPdf,
+    exportDoc,
+    exportPng,
     closeTab: closeActiveDoc,
     nextTab: () => switchTabByOffset(1),
     prevTab: () => switchTabByOffset(-1),
@@ -1389,8 +1739,11 @@ async function executeShortcut(commandId: ShortcutCommandId) {
     toggleCodeBlock: () => { runEditorCommand("toggleCodeBlock"); },
     toggleTheme,
     toggleSourceMode,
-    openShortcutSettings,
+    openSettings,
     openCommandPalette,
+    findInDocument: openFindOnly,
+    replaceInDocument: openFindAndReplace,
+    toggleOutline,
   };
 
   await handlers[commandId]?.();
@@ -1417,6 +1770,9 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   if (showShortcutSettings.value) {
     if (event.key === "Escape") showShortcutSettings.value = false;
     return;
+  }
+  if (showFindReplace.value && event.key === "Escape") {
+    // FindReplace 内部也处理 Esc，这里避免抢走输入框焦点前的全局关闭
   }
   if (showCommandPalette.value) {
     if (event.key === "Escape") closeCommandPalette();
@@ -1536,6 +1892,12 @@ onBeforeUnmount(() => {
       @open-recent="openFile"
     />
     <Tabs v-if="session.docs.length" @close="closeDoc" @switch="switchTo" />
+    <EditorToolbar
+      v-if="activeDoc"
+      :disabled="!hasActiveDoc"
+      :mode="editorMode.mode"
+      @action="handleToolbarAction"
+    />
     <div class="body">
       <aside class="sidebar">
         <section v-if="ws.rootPath">
@@ -1562,23 +1924,56 @@ onBeforeUnmount(() => {
           通过“文件”菜单打开文件夹或文件开始
         </div>
       </aside>
-      <SourceEditor
-        ref="sourceEditorRef"
-        v-if="editorMode.mode === 'source' && activeDoc"
-        @undo-fallback="undoVisualEditorHistory"
-        @redo-fallback="redoVisualEditorHistory"
-        :key="`source-${session.activeId ?? 'empty'}`"
-        :doc-id="activeDoc.id"
-        :model-value="activeDoc.rawMd"
-        :initial-selection="activeDoc.sourceSelection"
-        class="mira-editor editor source-editor-shell"
-        @update:model-value="onSourceUpdate"
-      />
-      <EditorContent
-        v-else-if="activeEditor"
-        :key="session.activeId ?? 'empty'"
-        :editor="activeEditor"
-        class="mira-editor editor"
+      <div class="editor-column">
+        <FindReplace
+          v-if="showFindReplace && activeDoc"
+          :match-count="findMatchCount"
+          :current-index="findIndex"
+          :mode="editorMode.mode"
+          :show-replace="findShowReplaceRow"
+          @update:query="(v) => (findQuery = v)"
+          @update:replacement="(v) => (findReplacement = v)"
+          @update:use-regex="(v) => (findUseRegex = v)"
+          @update:case-sensitive="(v) => (findCaseSensitive = v)"
+          @find-next="gotoFindMatch(1)"
+          @find-prev="gotoFindMatch(-1)"
+          @replace="applyReplaceOne"
+          @replace-all="applyReplaceAll"
+          @close="closeFindReplace"
+        />
+        <SourceEditor
+          ref="sourceEditorRef"
+          v-if="editorMode.mode === 'source' && activeDoc"
+          @undo-fallback="undoVisualEditorHistory"
+          @redo-fallback="redoVisualEditorHistory"
+          :key="`source-${session.activeId ?? 'empty'}`"
+          :doc-id="activeDoc.id"
+          :model-value="activeDoc.rawMd"
+          :initial-selection="activeDoc.sourceSelection"
+          class="mira-editor editor source-editor-shell"
+          @update:model-value="onSourceUpdate"
+        />
+        <EditorContent
+          v-else-if="activeEditor"
+          :key="session.activeId ?? 'empty'"
+          :editor="activeEditor"
+          class="mira-editor editor"
+        />
+        <div v-else class="editor-empty">
+          <div class="editor-empty-card">
+            <h2>Mira</h2>
+            <p>所见即所得的 Markdown 编辑器</p>
+            <p class="editor-empty-actions">
+              打开文件（Ctrl+O）或打开文件夹（Ctrl+Shift+O）开始写作
+            </p>
+          </div>
+        </div>
+      </div>
+      <OutlinePanel
+        v-if="showOutline && activeDoc"
+        :items="outlineItems"
+        @select="scrollToMarkdownOffset"
+        @close="toggleOutline"
       />
     </div>
     <div
@@ -1615,6 +2010,7 @@ onBeforeUnmount(() => {
     <footer class="status">
       <span class="status-path" :title="currentPathLabel">{{ currentPathLabel }}</span>
       <span class="status-save" :class="{ dirty }">{{ saveStateLabel }}</span>
+      <span v-if="activeDoc" class="status-stats" title="字数统计">{{ statsLabel }}</span>
     </footer>
   </div>
 </template>

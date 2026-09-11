@@ -8,7 +8,7 @@ const shortcuts = {
   saveFile: "Ctrl + S",
   closeTab: "Ctrl + W",
   toggleBold: "Ctrl + B",
-  openShortcutSettings: "Ctrl + ,",
+  openSettings: "Ctrl + ,",
 };
 
 describe("app menu model", () => {

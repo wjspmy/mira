@@ -135,6 +135,40 @@ export function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Word 可直接打开的 HTML（.doc），零额外依赖。 */
+export function wrapWordDocument(fragment: string, options: ExportHtmlOptions): string {
+  const title = options.title || "Mira Export";
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(title)}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->
+<style>
+body { font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12pt; line-height: 1.6; }
+h1 { font-size: 18pt; }
+h2 { font-size: 15pt; }
+h3 { font-size: 13pt; }
+pre { font-family: Consolas, monospace; background: #f5f5f5; padding: 8pt; }
+table { border-collapse: collapse; width: 100%; }
+td, th { border: 1px solid #999; padding: 4pt 6pt; }
+img { max-width: 100%; }
+</style>
+</head>
+<body>
+${fragment}
+</body>
+</html>
+`;
+}
+
+/** 把 base64 转 Uint8Array，供 write_file_bytes 使用。 */
+export function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 /** 通过隐藏 iframe 调起系统打印对话框（可另存为 PDF）。 */
 export function printHtmlDocument(html: string): boolean {
   const iframe = document.createElement("iframe");

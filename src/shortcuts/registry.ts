@@ -1,4 +1,4 @@
-export type ShortcutGroup = "file" | "tabs" | "edit" | "app";
+export type ShortcutGroup = "file" | "tabs" | "edit" | "view" | "app";
 
 export type ShortcutCommandId =
   | "newDoc"
@@ -7,6 +7,8 @@ export type ShortcutCommandId =
   | "saveFile"
   | "exportHtml"
   | "exportPdf"
+  | "exportDoc"
+  | "exportPng"
   | "closeTab"
   | "nextTab"
   | "prevTab"
@@ -29,8 +31,11 @@ export type ShortcutCommandId =
   | "toggleCodeBlock"
   | "toggleTheme"
   | "toggleSourceMode"
-  | "openShortcutSettings"
-  | "openCommandPalette";
+  | "openSettings"
+  | "openCommandPalette"
+  | "findInDocument"
+  | "replaceInDocument"
+  | "toggleOutline";
 
 export interface ShortcutCommand {
   id: ShortcutCommandId;
@@ -44,6 +49,7 @@ export const SHORTCUT_GROUP_LABELS: Record<ShortcutGroup, string> = {
   file: "文件",
   tabs: "标签页",
   edit: "编辑",
+  view: "视图",
   app: "应用",
 };
 
@@ -54,6 +60,8 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "saveFile", title: "保存当前文档", group: "file", defaultShortcut: "Mod+S" },
   { id: "exportHtml", title: "导出 HTML", group: "file", defaultShortcut: null },
   { id: "exportPdf", title: "导出 PDF（打印）", group: "file", defaultShortcut: null },
+  { id: "exportDoc", title: "导出 Word（.doc）", group: "file", defaultShortcut: null },
+  { id: "exportPng", title: "导出图片（PNG）", group: "file", defaultShortcut: null },
   { id: "closeTab", title: "关闭当前标签页", group: "tabs", defaultShortcut: "Mod+W" },
   { id: "nextTab", title: "切换到下一个标签页", group: "tabs", defaultShortcut: "Mod+Tab" },
   { id: "prevTab", title: "切换到上一个标签页", group: "tabs", defaultShortcut: "Mod+Shift+Tab" },
@@ -76,8 +84,11 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "toggleCodeBlock", title: "切换代码块", group: "edit", defaultShortcut: null },
   { id: "toggleTheme", title: "切换浅色/深色主题", group: "app", defaultShortcut: "Mod+Shift+L" },
   { id: "toggleSourceMode", title: "切换源码模式", group: "app", defaultShortcut: "Mod+Shift+M" },
-  { id: "openShortcutSettings", title: "打开快捷键设置", group: "app", defaultShortcut: "Mod+," },
+  { id: "openSettings", title: "打开设置", group: "app", defaultShortcut: "Mod+," },
   { id: "openCommandPalette", title: "打开命令面板", group: "app", defaultShortcut: "Mod+Shift+P" },
+  { id: "findInDocument", title: "文内查找", group: "edit", defaultShortcut: "Mod+F", description: "在当前文档中查找" },
+  { id: "replaceInDocument", title: "文内替换", group: "edit", defaultShortcut: "Mod+H", description: "查找并替换" },
+  { id: "toggleOutline", title: "显示/隐藏大纲", group: "view", defaultShortcut: null },
 ];
 
 export const SHORTCUT_COMMAND_BY_ID = Object.fromEntries(

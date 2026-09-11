@@ -119,6 +119,18 @@ function focusEditor(selection?: TextSelection | null) {
   if (selection) applySelection(selection);
 }
 
+function scrollToOffset(offset: number, selectLength = 0) {
+  if (!view) return;
+  const pos = Math.min(Math.max(0, offset), view.state.doc.length);
+  const end = Math.min(pos + Math.max(0, selectLength), view.state.doc.length);
+  view.dispatch({
+    selection: EditorSelection.range(pos, end),
+    effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    annotations: Transaction.addToHistory.of(false),
+  });
+  view.focus();
+}
+
 defineExpose({
   undo: undoSource,
   redo: redoSource,
@@ -126,6 +138,7 @@ defineExpose({
   getSelection,
   setSelection: applySelection,
   flushPendingChange,
+  scrollToOffset,
 });
 
 onMounted(mountEditor);

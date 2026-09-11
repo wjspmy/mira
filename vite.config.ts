@@ -14,4 +14,23 @@ export default defineConfig(async () => ({
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/katex") || id.includes("node_modules/mhchem")) return "katex";
+          if (id.includes("node_modules/@codemirror") || id.includes("node_modules/@lezer")) return "codemirror";
+          if (
+            id.includes("node_modules/@tiptap") ||
+            id.includes("node_modules/prosemirror") ||
+            id.includes("node_modules/tiptap-markdown")
+          ) {
+            return "tiptap";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 }));

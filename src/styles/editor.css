@@ -54,6 +54,20 @@ body { background: var(--bg); color: var(--fg); }
 .tab-close:hover { color: var(--fg); }
 
 .body { flex: 1; display: flex; min-height: 0; }
+.editor-column {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-column > .editor,
+.editor-column > .source-editor-shell,
+.editor-column > .mira-editor {
+  flex: 1;
+  min-height: 0;
+}
 
 .sidebar {
   width: 240px;
@@ -333,7 +347,7 @@ body { background: var(--bg); color: var(--fg); }
 
 .status {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   min-height: 28px;
@@ -359,6 +373,11 @@ body { background: var(--bg); color: var(--fg); }
   white-space: nowrap;
 }
 .status-save.dirty { color: #d97706; }
+.status-stats {
+  justify-self: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* 数学公式 */
 .editor .ProseMirror .math-inline { display: inline-block; vertical-align: middle; }
@@ -686,6 +705,369 @@ body { background: var(--bg); color: var(--fg); }
 .settings-field:has(.settings-range) {
   grid-template-columns: minmax(180px, 1fr) minmax(160px, 240px);
 }
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-tab {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.settings-tab:hover {
+  background: var(--code-bg);
+  color: var(--fg);
+}
+.settings-tab.active {
+  border-color: var(--border);
+  background: var(--code-bg);
+  color: var(--fg);
+  font-weight: 600;
+}
 @media (max-width: 720px) {
   .settings-field { grid-template-columns: 1fr; align-items: stretch; }
 }
+
+/* 大纲 */
+.outline-panel {
+  width: 220px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.outline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.outline-empty {
+  padding: 16px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.outline-list {
+  overflow: auto;
+  padding: 6px 0;
+}
+.outline-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.outline-item:hover { background: var(--code-bg); }
+.outline-item.active { color: var(--accent); background: rgba(37, 99, 235, 0.08); }
+.outline-item.level-1 { font-weight: 600; }
+.outline-item.level-2 { font-weight: 500; }
+
+/* 格式工具栏（对齐 GitHub Markdown 工具栏） */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.editor-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.editor-toolbar-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+}
+.editor-toolbar-btn {
+  min-width: 28px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 6px;
+  line-height: 1;
+}
+.editor-toolbar-btn:hover:not(:disabled) {
+  background: var(--code-bg);
+  border-color: var(--border);
+}
+.editor-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.editor-toolbar-btn.tb-bold { font-weight: 700; }
+.editor-toolbar-btn.tb-italic { font-style: italic; }
+.editor-toolbar-btn.tb-strike { text-decoration: line-through; }
+.editor-toolbar-btn.tb-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* 空状态 */
+.editor-empty {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+.editor-empty-card {
+  text-align: center;
+  color: var(--muted);
+  max-width: 360px;
+  padding: 24px;
+}
+.editor-empty-card h2 {
+  margin: 0 0 8px;
+  color: var(--fg);
+  font-size: 22px;
+  font-weight: 600;
+}
+.editor-empty-card p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.editor-empty-actions {
+  color: var(--muted);
+}
+
+/* GitHub Alerts */
+.editor .ProseMirror blockquote[data-alert],
+.source-editor blockquote[data-alert] {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border-left: 4px solid #0969da;
+  border-radius: 6px;
+  background: #ddf4ff;
+  color: inherit;
+}
+.editor .ProseMirror blockquote[data-alert]::before,
+.source-editor blockquote[data-alert]::before {
+  display: block;
+  font-weight: 600;
+  font-size: 0.85em;
+  margin-bottom: 0.35em;
+  letter-spacing: 0.02em;
+}
+.editor .ProseMirror blockquote[data-alert="note"]::before,
+.source-editor blockquote[data-alert="note"]::before {
+  content: "Note";
+  color: #0969da;
+}
+.editor .ProseMirror blockquote[data-alert="tip"]::before,
+.source-editor blockquote[data-alert="tip"]::before {
+  content: "Tip";
+  color: #1a7f37;
+}
+.editor .ProseMirror blockquote[data-alert="tip"],
+.source-editor blockquote[data-alert="tip"] {
+  border-left-color: #1a7f37;
+  background: #dafbe1;
+}
+.editor .ProseMirror blockquote[data-alert="important"],
+.source-editor blockquote[data-alert="important"] {
+  border-left-color: #8250df;
+  background: #fbefff;
+}
+.editor .ProseMirror blockquote[data-alert="important"]::before,
+.source-editor blockquote[data-alert="important"]::before {
+  content: "Important";
+  color: #8250df;
+}
+.editor .ProseMirror blockquote[data-alert="warning"],
+.source-editor blockquote[data-alert="warning"] {
+  border-left-color: #9a6700;
+  background: #fff8c5;
+}
+.editor .ProseMirror blockquote[data-alert="warning"]::before,
+.source-editor blockquote[data-alert="warning"]::before {
+  content: "Warning";
+  color: #9a6700;
+}
+.editor .ProseMirror blockquote[data-alert="caution"],
+.source-editor blockquote[data-alert="caution"] {
+  border-left-color: #cf222e;
+  background: #ffebe9;
+}
+.editor .ProseMirror blockquote[data-alert="caution"]::before,
+.source-editor blockquote[data-alert="caution"]::before {
+  content: "Caution";
+  color: #cf222e;
+}
+:root[data-theme="dark"] .editor .ProseMirror blockquote[data-alert="note"],
+:root[data-theme="dark"] .source-editor blockquote[data-alert="note"] {
+  background: rgba(56, 139, 253, 0.15);
+}
+:root[data-theme="dark"] .editor .ProseMirror blockquote[data-alert="warning"],
+:root[data-theme="dark"] .source-editor blockquote[data-alert="warning"] {
+  background: rgba(187, 128, 9, 0.15);
+}
+:root[data-theme="dark"] .editor .ProseMirror blockquote[data-alert="caution"],
+:root[data-theme="dark"] .source-editor blockquote[data-alert="caution"] {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.vscode-find {
+  position: absolute;
+  top: 8px;
+  right: 18px;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: 18px minmax(220px, 320px) auto;
+  grid-template-areas:
+    "chev fields actions"
+    ".    replace replace";
+  align-items: center;
+  gap: 2px 4px;
+  padding: 4px 4px 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.03);
+  font-size: 12px;
+  color: var(--fg);
+  user-select: none;
+}
+.vscode-find-chevron {
+  grid-area: chev;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.vscode-find-chevron svg {
+  transition: transform 0.12s ease;
+}
+.vscode-find-chevron.open svg {
+  transform: rotate(90deg);
+}
+.vscode-find-chevron:hover,
+.vscode-find-btn:hover {
+  background: var(--code-bg);
+  color: var(--fg);
+}
+.vscode-find-fields {
+  grid-area: fields;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.vscode-find-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.vscode-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.vscode-find-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.vscode-find-count {
+  flex-shrink: 0;
+  min-width: 42px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.vscode-find-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 2px;
+}
+.vscode-find-btn {
+  min-width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  line-height: 1;
+}
+.vscode-find-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(37, 99, 235, 0.1);
+  font-weight: 600;
+}
+.vscode-find-close {
+  margin-left: 2px;
+  color: var(--muted);
+}
+.vscode-find-replace-actions {
+  grid-area: replace;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 2px 4px 2px 0;
+}
+.vscode-find-btn.text-btn {
+  min-width: 44px;
+  padding: 0 8px;
+  border-color: var(--border);
+  background: var(--code-bg);
+}
+.vscode-find-btn.text-btn:hover {
+  border-color: var(--accent);
+}
+
+

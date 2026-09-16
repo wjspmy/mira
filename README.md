@@ -1,61 +1,68 @@
 # Mira
 
-> 所见，即所得。A minimalist desktop Markdown WYSIWYG editor.
+> 所见，即所得。本地优先的桌面 Markdown 编辑器。
 
-对标 [Typora](https://typora.io) 的桌面 Markdown 编辑器：本地优先、单用户、开源、轻量。
-完整设计与路线图见 [docs/design.md](docs/design.md)。M2 修复与回归记录见 [docs/known-issues.md](docs/known-issues.md)。
+对标 Typora 的极简 WYSIWYG 编辑器：单用户、开源、轻量。技术说明见 [docs/design.md](docs/design.md)。
 
-## 功能
+![icon](docs/icon-mira.png)
 
-- 所见即所得编辑（Tiptap/ProseMirror），打字即渲染
-- GFM：标题、粗/斜体、行内代码、有序/无序列表、任务列表、引用、表格、删除线、分隔线
-- 代码块语法高亮（lowlight，37+ 种常用语言）
-- 数学公式：行内 `$…$` 与块级 `$$…$$`（KaTeX，点击编辑原文）
-- 浅色 / 深色 / 跟随系统主题（代码 token 双套配色）
-- 丰富快捷键与本地自定义快捷键设置
-- Typora 风格菜单栏、文件菜单最近打开、底部路径状态栏
-- 斜杠命令 `/`、工作区全文搜索（`Ctrl/Cmd+Shift+F`）、TOC 生成、折叠块、Emoji、Front Matter
-- 脚注高亮（`[^id]`）、专注模式、打字机模式、输入自动配对（括号/引号/强调符）
-- Mermaid 图表（```mermaid）、代码块语言角标与悬停复制、表格行列增删、源码模式自动换行
-- 格式工具栏（GitHub 风格）、GitHub Alerts（`[!NOTE]` 等）、任务列表、表格
-- 文内查找（`Ctrl/Cmd+F`）与替换（`Ctrl/Cmd+H`），大纲侧栏，状态栏字数统计
-- 命令面板与快速打开（命令、已打开文件、最近文件和工作区 Markdown 文件）
-- 源码模式（CodeMirror 6，`Ctrl/Cmd+Shift+M`），与所见即所得共享同一文档；切换尽量保留光标/选区
-- 大文件（≥200KB）自动使用源码模式（CodeMirror 虚拟滚动）；≥1MB 关闭语法高亮以保持流畅
-- 自定义 CSS（作用域注入编辑区/源码区，文件变更自动热加载）
-- 打开 / 保存 `.md`（原子写）、防抖自动保存（延迟可配）
-- 设置：主题（浅/深/跟随系统）、正文字号、自动保存延迟、图片本地化策略、自定义 CSS
-- 导出 HTML / PDF（打印）/ Word (.doc) / PNG；本地图片内联，文件外打开也能显示
-- Markdown round-trip 无损（自研序列化器 + remark 归一）
+## 功能概览
 
-## 技术栈
+### 写作
+- 所见即所得（Tiptap），支持 GFM：标题、列表、任务、表格、引用、代码块、删除线等
+- 数学公式 `$…$` / `$$…$$`（KaTeX），Mermaid 图表，GitHub Alerts（`[!NOTE]` 等）
+- 高亮 `==文字==`、上下标、脚注标记、折叠块、Front Matter
+- 格式工具栏；输入 `/` 斜杠命令、`:emoji:` 短代码；括号自动配对
+- 专注模式、打字机模式；大纲侧栏；字数与行列状态
 
-- **Tauri 2**（Rust 后端）+ **Vue 3** + **Vite** + **TypeScript**
-- **Tiptap**（ProseMirror）WYSIWYG 内核 + **lowlight** 代码高亮 + **KaTeX** 数学
-- **remark**（unified）做 Markdown 规范化归一
-- **vitest** + jsdom 做 round-trip 测试
-- **CodeMirror 6** 源码模式（兼作大文件退化路径）
+### 文件与工作区
+- 打开/保存 `.md`，原子写；拖入文件或系统「用 Mira 打开」自动载入
+- 工作区文件树、最近打开、工作区搜索（`Ctrl+Shift+F`）
+- 大文件（≥200KB）自动切源码模式（CodeMirror 虚拟滚动）
+- 源码模式（`Ctrl+Shift+M`），与 WYSIWYG 共享同一文档
+
+### 查找与导出
+- 文内查找/替换（`Ctrl+F` / `Ctrl+H`），VS Code 风格悬浮条
+- 导出 HTML / PDF / Word (.doc) / PNG，本地图片内联
+
+### 设置
+- 主题（浅/深/跟随系统）、字号、自动保存延迟、图片本地化策略
+- 自定义 CSS、快捷键自定义、斜杠命令开关、单实例开关
+
+## 快捷键（默认）
+
+| 操作 | 快捷键 |
+|------|--------|
+| 新建 / 打开 / 保存 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` |
+| 查找 / 替换 | `Ctrl+F` / `Ctrl+H` |
+| 源码模式 | `Ctrl+Shift+M` |
+| 命令面板 | `Ctrl+Shift+P` |
+| 设置 | `Ctrl+,` |
+| 工作区搜索 | `Ctrl+Shift+F` |
 
 ## 开发
 
 ```bash
 npm install
-npm run tauri dev     # 启动开发模式（首次编译 Rust 约 2-3 分钟）
-npm run tauri build   # 打包发布
-npm test              # 跑 round-trip 测试
+npm run tauri dev          # 开发模式（首次编译 Rust 较慢）
+npx tauri build --no-bundle  # 生成便携 mira.exe（内嵌前端）
+npm run tauri build          # 生成 MSI / NSIS 安装包
+npm test
 ```
 
-前提：Node.js、Rust（rustup）、Windows 需 WebView2 + MSVC 构建工具。
+**前提**：Node.js、Rust（rustup）、Windows 上需 WebView2 + MSVC 构建工具。  
+正式 exe 请用 `tauri build` / `npx tauri build --no-bundle`，不要只跑 `cargo build`（会连开发服务器）。
+
+图标源文件：`docs/icon-mira.svg`；多尺寸见 `docs/icons/` 与 `scripts/make-icons.py`。
+
+## 技术栈
+
+- Tauri 2（Rust）+ Vue 3 + Vite + TypeScript  
+- Tiptap / ProseMirror + CodeMirror 6 + KaTeX + Mermaid + lowlight  
 
 ## 状态
 
-**M0–M5 开发能力已收口**（测试 80+，Windows 安装包可打包）。
-
-已覆盖：WYSIWYG 全家桶、源码/大文件、查找替换、大纲、字数、Mermaid、Alerts、脚注、TOC、斜杠命令、工作区搜索、Emoji、Front Matter、专注/打字机、导出 HTML/PDF/Word/PNG、设置与主题。
-
-发布向剩余：应用图标定稿（源文件见 `docs/icon-source.png`）、自动更新签名、mac/Linux 打包、完整 E2E 驱动、Tiptap 3 升级评估。
-
-路线图：~~M0–M5 核心~~ ✅ → 发布收尾。
+核心编辑能力已完成，可日常使用。发布向剩余：自动更新签名、mac/Linux 打包、完整 E2E。
 
 ## License
 

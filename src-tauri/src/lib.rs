@@ -755,10 +755,62 @@ fn unwatch(root: String, state: tauri::State<'_, WatcherState>) -> Result<(), St
     Ok(())
 }
 
+/// 启动参数：供「用 Mira 打开」传入文件路径
+#[tauri::command]
+fn get_cli_args() -> Vec<String> {
+    std::env::args().skip(1).collect()
+}
+
+fn single_instance_pref_path() -> Option<PathBuf> {
+    let base = std::env::var_os("APPDATA")?;
+    Some(PathBuf::from(base).join("dev.mira.editor").join("single-instance"))
+}
+
+fn read_single_instance_enabled() -> bool {
+    if let Ok(v) = std::env::var("MIRA_SINGLE_INSTANCE") {
+        return v.trim() != "0";
+    }
+    if let Some(path) = single_instance_pref_path() {
+        if let Ok(s) = fs::read_to_string(path) {
+            return s.trim() != "0";
+        }
+    }
+    true
+}
+
+#[tauri::command]
+fn set_single_instance_pref(enabled: bool) -> Result<(), String> {
+    let path = single_instance_pref_path().ok_or("无法解析配置目录")?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, if enabled { "1" } else { "0" }).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    if read_single_instance_enabled() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            use tauri::{Emitter, Manager};
+            let files: Vec<String> = argv
+                .into_iter()
+                .skip(1)
+                .filter(|p| {
+                    let lower = p.to_lowercase();
+                    lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".txt")
+                })
+                .collect();
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            if !files.is_empty() {
+                let _ = app.emit("mira:open-files", files);
+            }
+        }));
+    }
+    builder
         .manage(WatcherState {
             watchers: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             recent_writes: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -789,7 +841,9 @@ pub fn run() {
             delete_path,
             write_asset,
             watch,
-            unwatch
+            unwatch,
+            get_cli_args,
+            set_single_instance_pref
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

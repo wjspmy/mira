@@ -14,6 +14,10 @@ export interface AppSettings {
   editorFontFamily: string;
   autoSaveDelayMs: number;
   imageStrategy: ImageStrategy;
+  /** 输入 / 弹出插入命令菜单 */
+  slashCommandsEnabled: boolean;
+  /** 单实例：已运行时再次启动只聚焦原窗口（重启后生效） */
+  singleInstanceEnabled: boolean;
   customCssPath: string;
   customCssVersion: number;
 }
@@ -24,6 +28,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   editorFontFamily: "",
   autoSaveDelayMs: 1000,
   imageStrategy: "assets-subdir",
+  slashCommandsEnabled: true,
+  singleInstanceEnabled: true,
   customCssPath: "",
   customCssVersion: 0,
 };
@@ -52,6 +58,8 @@ function normalizeSettings(value: unknown): AppSettings {
     editorFontFamily: typeof raw.editorFontFamily === "string" ? raw.editorFontFamily.trim() : "",
     autoSaveDelayMs: clampInt(raw.autoSaveDelayMs, 300, 30000, DEFAULT_SETTINGS.autoSaveDelayMs),
     imageStrategy: normalizeImageStrategy(raw.imageStrategy),
+    slashCommandsEnabled: raw.slashCommandsEnabled !== false,
+    singleInstanceEnabled: raw.singleInstanceEnabled !== false,
     customCssPath: typeof raw.customCssPath === "string" ? normalizeNativePath(raw.customCssPath).trim() : "",
     customCssVersion: typeof raw.customCssVersion === "number" ? raw.customCssVersion : 0,
   };
@@ -77,6 +85,8 @@ export const useSettingsStore = defineStore("settings", () => {
   const editorFontFamily = computed(() => settings.value.editorFontFamily);
   const autoSaveDelayMs = computed(() => settings.value.autoSaveDelayMs);
   const imageStrategy = computed(() => settings.value.imageStrategy);
+  const slashCommandsEnabled = computed(() => settings.value.slashCommandsEnabled);
+  const singleInstanceEnabled = computed(() => settings.value.singleInstanceEnabled);
   const customCssPath = computed(() => settings.value.customCssPath);
   const customCssVersion = computed(() => settings.value.customCssVersion);
 
@@ -122,6 +132,8 @@ export const useSettingsStore = defineStore("settings", () => {
     editorFontFamily,
     autoSaveDelayMs,
     imageStrategy,
+    slashCommandsEnabled,
+    singleInstanceEnabled,
     customCssPath,
     customCssVersion,
     patch,

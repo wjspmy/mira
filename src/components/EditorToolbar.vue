@@ -98,6 +98,7 @@ const disabledAll = computed(() => props.disabled || props.mode !== "visual");
             class="md-toolbar-btn md-toolbar-heading-trigger"
             :class="{ active: headingActive || openMenu === 'heading' }"
             title="标题级别"
+            aria-label="标题级别"
             :disabled="disabledAll"
             @click="onButton(btn)"
           >
@@ -156,14 +157,16 @@ const disabledAll = computed(() => props.disabled || props.mode !== "visual");
             </svg>
           </button>
           <div v-if="openMenu === 'more'" class="md-menu md-menu-right" role="menu">
-            <template v-for="item in MORE_MENU" :key="item.id">
+            <template v-for="(item, i) in MORE_MENU" :key="item.id || item.label + i">
               <div v-if="item.separatorBefore" class="md-menu-sep" />
+              <div v-if="item.section" class="md-menu-section">{{ item.label }}</div>
               <button
+                v-else
                 type="button"
                 class="md-menu-item"
                 role="menuitem"
                 :disabled="disabledAll"
-                @click="onMenuAction(item.id)"
+                @click="item.id && onMenuAction(item.id)"
               >
                 {{ item.label }}
               </button>
@@ -176,6 +179,7 @@ const disabledAll = computed(() => props.disabled || props.mode !== "visual");
           class="md-toolbar-btn"
           :class="{ active: btn.id === 'toggleSourceMode' && mode === 'source' }"
           :title="btn.title"
+          :aria-label="btn.title"
           :disabled="disabled"
           @click="onButton(btn)"
         >

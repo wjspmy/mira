@@ -11,6 +11,7 @@ export type EditorToolbarAction =
   | "bold"
   | "italic"
   | "strike"
+  | "highlight"
   | "code"
   | "link"
   | "image"
@@ -25,6 +26,9 @@ export type EditorToolbarAction =
   | "addTableColumn"
   | "deleteTableRow"
   | "deleteTableColumn"
+  | "tableAlignLeft"
+  | "tableAlignCenter"
+  | "tableAlignRight"
   | "insertMermaid"
   | "insertMathBlock"
   | "insertMathInline"
@@ -63,26 +67,37 @@ export const HEADING_MENU: Array<{ id: EditorToolbarAction; label: string }> = [
   { id: "heading6", label: "六级标题" },
 ];
 
-/** 「更多」菜单：低频插入与表格操作 */
-export const MORE_MENU: Array<{ id: EditorToolbarAction; label: string; separatorBefore?: boolean }> = [
-  { id: "insertTable", label: "插入表格" },
+export type MoreMenuItem = {
+  id?: EditorToolbarAction;
+  label: string;
+  separatorBefore?: boolean;
+  section?: boolean;
+};
+
+/** 「更多」菜单：低频插入与表格操作（分组标题提升 IA） */
+export const MORE_MENU: MoreMenuItem[] = [
+  { label: "插入", section: true },
+  { id: "insertTable", label: "表格" },
   { id: "addTableRow", label: "表格：下方加行" },
   { id: "addTableColumn", label: "表格：右侧加列" },
-  { id: "deleteTableRow", label: "表格：删除行", separatorBefore: true },
+  { id: "deleteTableRow", label: "表格：删除行" },
   { id: "deleteTableColumn", label: "表格：删除列" },
+  { id: "tableAlignLeft", label: "表格：左对齐", separatorBefore: true },
+  { id: "tableAlignCenter", label: "表格：居中" },
+  { id: "tableAlignRight", label: "表格：右对齐" },
   { id: "insertMathInline", label: "行内公式 $…$", separatorBefore: true },
   { id: "insertMathBlock", label: "块级公式 $$…$$" },
   { id: "insertMermaid", label: "Mermaid 图" },
-  { id: "insertDetails", label: "折叠块", separatorBefore: true },
+  { id: "insertDetails", label: "折叠块" },
   { id: "insertToc", label: "生成目录 TOC" },
   { id: "alertNote", label: "提示块 [!NOTE]", separatorBefore: true },
   { id: "alertTip", label: "技巧块 [!TIP]" },
   { id: "alertWarning", label: "警告块 [!WARNING]" },
+  { id: "openEmoji", label: "Emoji…", separatorBefore: true },
+  { id: "insertFrontMatter", label: "插入 Front Matter" },
   { id: "toggleFocusMode", label: "专注模式", separatorBefore: true },
   { id: "toggleTypewriterMode", label: "打字机模式" },
   { id: "openWorkspaceSearch", label: "工作区搜索…" },
-  { id: "openEmoji", label: "Emoji…", separatorBefore: true },
-  { id: "insertFrontMatter", label: "插入 Front Matter" },
 ];
 
 /** 左侧主工具栏按钮（含 heading 触发器） */
@@ -95,6 +110,7 @@ export const MAIN_TOOLBAR_BUTTONS: ToolbarButtonDef[] = [
   { id: "bold", icon: "bold", title: "加粗 (Ctrl+B)", toggle: true },
   { id: "italic", icon: "italic", title: "斜体 (Ctrl+I)", toggle: true },
   { id: "strike", icon: "strike", title: "删除线", toggle: true },
+  { id: "highlight", icon: "highlight", title: "高亮 (==文字==)", toggle: true },
   { id: "code", icon: "code", title: "行内代码", toggle: true },
 
   { id: "bulletList", icon: "ul", title: "无序列表", toggle: true },
@@ -126,6 +142,7 @@ export const TOOLBAR_ICONS: Record<string, string> = {
   redo: "M13 7H6a3 3 0 000 6h3M13 7l-3-3M13 7l-3 3",
   heading: "M4 3.5v9M9 3.5v9M4 8h5",
   bold: "M5 3h4a2.5 2.5 0 010 5H5V3zm0 5h5a2.5 2.5 0 010 5H5V8z",
+  highlight: "M3 9h10M5 4h6v3H5V4zm2 7h2v2H7v-2z",
   italic: "M10 3H6M10 13H6M9 3l-2 10",
   strike: "M3 8h10M5 5.5A2.5 2.5 0 018 4c1.4 0 2.2.7 2.5 1.5M11 10.5A2.5 2.5 0 018 12c-1.4 0-2.2-.7-2.5-1.5",
   code: "M5.5 5L3 8l2.5 3M10.5 5L13 8l-2.5 3",

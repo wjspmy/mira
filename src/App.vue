@@ -3,6 +3,7 @@ import { ref, watch, onBeforeUnmount, onMounted, computed, nextTick, shallowRef,
 import { Editor, EditorContent } from "@tiptap/vue-3";
 import type { Editor as CoreEditor } from "@tiptap/core";
 import { EditorState } from "@tiptap/pm/state";
+import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "tiptap-markdown";
 import { createLowlight, common } from "lowlight";
@@ -15,7 +16,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import { MathInline, MathBlock } from "./editor/math";
-import { serializeDocToMarkdown } from "./editor/serialize";
+import { serializeDocToMarkdown, parseMarkdownToDoc } from "./editor/serialize";
 import { MiraImage } from "./editor/image";
 import { useWorkspaceStore, type FileNode } from "./stores/workspace";
 import { useSessionStore, type Doc } from "./stores/session";
@@ -49,10 +50,17 @@ import { FootnoteHighlight } from "./editor/footnotes";
 import { FocusModeHighlight } from "./editor/focus-mode";
 import { AutoPair } from "./editor/auto-pair";
 import { DetailsBlock, DetailsSummary } from "./editor/details";
+import { HighlightMark, SubscriptMark, SuperscriptMark } from "./editor/marks";
+import { htmlClipboardToMarkdown } from "./editor/html-to-md";
 import { buildTocMarkdown } from "./editor/toc";
 import SlashMenu from "./components/SlashMenu.vue";
 import WorkspaceSearch from "./components/WorkspaceSearch.vue";
 import EmojiPicker from "./components/EmojiPicker.vue";
+import EmojiAliasMenu from "./components/EmojiAliasMenu.vue";
+import WelcomeEmpty from "./components/WelcomeEmpty.vue";
+import AppToast from "./components/AppToast.vue";
+import InputDialog from "./components/InputDialog.vue";
+import ImagePanel from "./components/ImagePanel.vue";
 import type { SlashCommand } from "./editor/slash";
 import { buildFrontMatterTemplate, hasFrontMatter } from "./editor/front-matter";
 import { extractOutline, type OutlineItem } from "./editor/outline";
@@ -63,6 +71,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog, ask, message as messageDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { basename, dirname, isSameOrChildPath, normPath, normalizeNativePath, replacePathPrefix } from "./utils/path";
 import { clearCustomCss, upsertCustomCss } from "./editor/custom-css";
 import { formatDocSizeLabel, isLargeDocument } from "./editor/large-doc";
@@ -90,6 +99,157 @@ const slashPos = ref({ x: 200, y: 200 });
 const showWorkspaceSearch = ref(false);
 const showEmoji = ref(false);
 const emojiPos = ref({ x: 240, y: 160 });
+const showEmojiAlias = ref(false);
+const emojiAliasQuery = ref("");
+const emojiAliasPos = ref({ x: 240, y: 160 });
+const isDragOverWindow = ref(false);
+let unlistenDrop: UnlistenFn | null = null;
+let unlistenOpenFiles: UnlistenFn | null = null;
+
+const DROPPABLE_MD = /\.(md|markdown|txt)$/i;
+
+async function openDroppedPaths(paths: string[]) {
+  const files = paths.filter((p) => DROPPABLE_MD.test(p));
+  if (!files.length) {
+    showToast("仅支持拖入 .md / .markdown / .txt 文件", "warn");
+    return;
+  }
+  for (const path of files) {
+    await openFile(path);
+  }
+}
+const toast = ref<{ message: string; kind: "info" | "success" | "warn" | "error" } | null>(null);
+watch(() => settings.slashCommandsEnabled, (on) => {
+  if (!on) showSlashMenu.value = false;
+});
+
+function showToast(message: string, kind: "info" | "success" | "warn" | "error" = "info") {
+  toast.value = { message, kind };
+  status.value = message;
+}
+
+function closeToast() {
+  toast.value = null;
+}
+
+const imagePanel = ref<{ src: string; alt: string; from: number; to: number } | null>(null);
+
+function refreshImagePanel() {
+  if (editorMode.mode !== "visual") {
+    imagePanel.value = null;
+    return;
+  }
+  const ed = activeEditor.value as any;
+  if (!ed) {
+    imagePanel.value = null;
+    return;
+  }
+  const node = ed.state.selection.node;
+  if (node && node.type?.name === "image") {
+    const { from, to } = ed.state.selection;
+    imagePanel.value = {
+      src: node.attrs?.src || "",
+      alt: node.attrs?.alt || "",
+      from,
+      to,
+    };
+  } else {
+    imagePanel.value = null;
+  }
+}
+
+function onImagePanelChange(payload: { src: string; alt: string }) {
+  const ed = activeEditor.value as any;
+  if (!ed || !imagePanel.value) return;
+  ed.chain().focus().updateAttributes("image", { alt: payload.alt }).run();
+  imagePanel.value = { ...imagePanel.value, alt: payload.alt };
+  if (session.activeDoc) {
+    session.activeDoc.rawMd = markdownFromEditor(ed);
+    session.activeDoc.dirty = true;
+    saveDraftForDoc(session.activeDoc);
+    scheduleAutosave();
+  }
+}
+
+function onImagePanelRemove() {
+  const ed = activeEditor.value as any;
+  if (!ed || !imagePanel.value) return;
+  ed.chain().focus().deleteRange({ from: imagePanel.value.from, to: imagePanel.value.to }).run();
+  imagePanel.value = null;
+  if (session.activeDoc) {
+    session.activeDoc.rawMd = markdownFromEditor(ed);
+    session.activeDoc.dirty = true;
+    saveDraftForDoc(session.activeDoc);
+    scheduleAutosave();
+  }
+}
+
+/** 自动保存倒计时（仅已命名 dirty 文档） */
+const autosaveLeftMs = ref(0);
+let autosaveCountdownTimer: ReturnType<typeof setInterval> | null = null;
+let autosaveDeadline = 0;
+
+function updateAutosaveCountdown() {
+  if (autosaveCountdownTimer) {
+    clearInterval(autosaveCountdownTimer);
+    autosaveCountdownTimer = null;
+  }
+  autosaveLeftMs.value = 0;
+}
+
+const autosaveLabel = computed(() => {
+  if (!autosaveLeftMs.value) return "";
+  const s = Math.ceil(autosaveLeftMs.value / 1000);
+  return `自动保存 ${s}s`;
+});
+
+type InputDialogState = {
+  title: string;
+  label: string;
+  placeholder: string;
+  initialValue: string;
+  confirmLabel: string;
+  validate?: (value: string) => string | null;
+};
+
+const inputDialog = ref<InputDialogState | null>(null);
+let inputDialogResolve: ((value: string | null) => void) | null = null;
+
+function promptInputDialog(options: {
+  title: string;
+  label?: string;
+  placeholder?: string;
+  initialValue?: string;
+  confirmLabel?: string;
+  validate?: (value: string) => string | null;
+}): Promise<string | null> {
+  return new Promise((resolve) => {
+    inputDialogResolve?.(null);
+    inputDialogResolve = resolve;
+    inputDialog.value = {
+      title: options.title,
+      label: options.label || "",
+      placeholder: options.placeholder || "",
+      initialValue: options.initialValue || "",
+      confirmLabel: options.confirmLabel || "确定",
+      validate: options.validate,
+    };
+  });
+}
+
+function onInputDialogSubmit(value: string) {
+  const resolve = inputDialogResolve;
+  inputDialogResolve = null;
+  inputDialog.value = null;
+  resolve?.(value);
+}
+
+function onInputDialogCancel() {
+  const resolve = inputDialogResolve;
+  inputDialogResolve = null;
+  inputDialog.value = null;
+  resolve?.(null);
+}
 const showFindReplace = ref(false);
 const findShowReplaceRow = ref(false);
 const findQuery = ref("");
@@ -419,6 +579,37 @@ watch(
 );
 
 const lowlight = createLowlight(common);
+// 单元格对齐（Vditor / GFM :---:）
+const TableCellAligned = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      textAlign: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-text-align") || element.style?.textAlign || null,
+        renderHTML: (attributes) =>
+          attributes.textAlign
+            ? { "data-text-align": attributes.textAlign, style: `text-align: ${attributes.textAlign}` }
+            : {},
+      },
+    };
+  },
+});
+const TableHeaderAligned = TableHeader.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      textAlign: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-text-align") || element.style?.textAlign || null,
+        renderHTML: (attributes) =>
+          attributes.textAlign
+            ? { "data-text-align": attributes.textAlign, style: `text-align: ${attributes.textAlign}` }
+            : {},
+      },
+    };
+  },
+});
 const MiraCodeBlockLowlight = createMermaidCodeBlock(CodeBlockLowlight, lowlight) as typeof CodeBlockLowlight;
 const loadingDocIds = new Set<string>(); // Suppress onUpdate during programmatic editor state changes.
 const editors = shallowRef(new Map<string, Editor>());
@@ -473,13 +664,16 @@ function createDocEditor(doc: Doc): Editor {
       StarterKit.configure({ codeBlock: false, blockquote: false }),
       GithubAlertBlockquote,
       MiraCodeBlockLowlight.configure({ lowlight }),
-      Table,
+      Table.configure({ resizable: true }),
       TableRow,
-      TableHeader,
-      TableCell,
+      TableHeaderAligned,
+      TableCellAligned,
       TaskList,
       TaskItem.configure({ nested: true }),
       Link.configure({ openOnClick: false }),
+      HighlightMark,
+      SubscriptMark,
+      SuperscriptMark,
       MathInline,
       MathBlock,
       MiraImage,
@@ -493,8 +687,56 @@ function createDocEditor(doc: Doc): Editor {
     // 大文件默认走源码模式，此处不解析整篇，避免创建 Tiptap 时卡死。
     content: isLargeDocument(doc.rawMd) ? "" : (doc.rawMd || ""),
     editorProps: {
+      handlePaste: (_view, event) => {
+        // 图片粘贴由 MiraImage 插件处理
+        const html = event.clipboardData?.getData("text/html");
+        if (!html) return false;
+        // 优先：用当前编辑器 schema 直接解析 HTML（避免 HTML→MD→再解析 丢样式/节点）
+        try {
+          const dom = new DOMParser().parseFromString(html, "text/html");
+          dom.querySelectorAll("script,style,meta,link,title").forEach((n) => n.remove());
+          const slice = PMDOMParser.fromSchema(_view.state.schema).parseSlice(dom.body);
+          if (slice.size > 0 && slice.content.size > 0) {
+            event.preventDefault();
+            const tr = _view.state.tr.replaceSelection(slice).scrollIntoView();
+            _view.dispatch(tr);
+            _view.focus();
+            return true;
+          }
+        } catch {
+          // 回退到 Markdown 转换
+        }
+        const text = event.clipboardData?.getData("text/plain") || "";
+        const md = htmlClipboardToMarkdown(html);
+        if (md === null) return false;
+        if (text && !/[<>]/.test(text) && md.trim() === text.trim()) return false;
+        event.preventDefault();
+        try {
+          const parsed = parseMarkdownToDoc(md);
+          const nodes = (parsed.toJSON() as { content?: unknown[] }).content ?? [];
+          if (!nodes.length) {
+            _view.dispatch(_view.state.tr.insertText(text || md).scrollIntoView());
+            _view.focus();
+            return true;
+          }
+          const ok = (ed as any)
+            ?.chain()
+            .focus()
+            .insertContent(nodes)
+            .scrollIntoView()
+            .run();
+          if (ok === false) {
+            _view.dispatch(_view.state.tr.insertText(text || md).scrollIntoView());
+            _view.focus();
+          }
+        } catch {
+          _view.dispatch(_view.state.tr.insertText(text || md).scrollIntoView());
+          _view.focus();
+        }
+        return true;
+      },
       handleKeyDown: (_view, event) => {
-        if (event.key === "/" && editorMode.mode === "visual") {
+        if (settings.slashCommandsEnabled && event.key === "/" && editorMode.mode === "visual") {
           const { $from, empty } = _view.state.selection;
           if (empty && $from.parent.type.name === "paragraph") {
             const coords = _view.coordsAtPos($from.pos);
@@ -503,7 +745,22 @@ function createDocEditor(doc: Doc): Editor {
             showSlashMenu.value = true;
           }
         }
+        if (settings.slashCommandsEnabled && event.key === ":" && editorMode.mode === "visual") {
+          const { $from, empty } = _view.state.selection;
+          if (empty && $from.parent.type.name === "paragraph") {
+            const before = _view.state.doc.textBetween($from.start(), $from.pos, "\n");
+            if (!before || /[\s:]/.test(before.slice(-1))) {
+              const coords = _view.coordsAtPos($from.pos);
+              emojiAliasPos.value = { x: coords.left, y: coords.bottom + 4 };
+              emojiAliasQuery.value = "";
+              showEmojiAlias.value = true;
+            }
+          }
+        }
         if (showSlashMenu.value && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
+          return false;
+        }
+        if (showEmojiAlias.value && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
           return false;
         }
         return false;
@@ -545,6 +802,24 @@ function createDocEditor(doc: Doc): Editor {
           showSlashMenu.value = false;
         }
       }
+      if (showEmojiAlias.value && doc.id === session.activeId) {
+        const { $from } = updatedEditor.state.selection;
+        const text = $from.parent.textContent;
+        const colonIdx = text.lastIndexOf(":");
+        if (colonIdx >= 0 && $from.pos > $from.start()) {
+          const q = text.slice(colonIdx + 1);
+          if (/\s/.test(q)) showEmojiAlias.value = false;
+          else emojiAliasQuery.value = q;
+        } else {
+          showEmojiAlias.value = false;
+        }
+      }
+      if (doc.id === session.activeId) refreshImagePanel();
+    },
+    onSelectionUpdate: ({ editor: updatedEditor }) => {
+      if (doc.id !== session.activeId) return;
+      void updatedEditor;
+      refreshImagePanel();
     },
   });
   ed.storage.miraDocDir = doc.filePath ? dirname(doc.filePath) || undefined : undefined;
@@ -621,6 +896,25 @@ async function restoreDocScroll(id: string | null) {
 const activeDoc = computed(() => session.activeDoc);
 const filePath = computed(() => session.activeDoc?.filePath ?? null);
 const dirty = computed(() => session.activeDoc?.dirty ?? false);
+
+watch(dirty, (isDirty) => {
+  if (!isDirty || !filePath.value) {
+    updateAutosaveCountdown();
+    return;
+  }
+  const delay = settings.autoSaveDelayMs;
+  autosaveDeadline = Date.now() + delay;
+  if (autosaveCountdownTimer) clearInterval(autosaveCountdownTimer);
+  autosaveLeftMs.value = delay;
+  autosaveCountdownTimer = setInterval(() => {
+    const left = autosaveDeadline - Date.now();
+    if (left <= 0) {
+      updateAutosaveCountdown();
+      return;
+    }
+    autosaveLeftMs.value = left;
+  }, 200);
+});
 const hasActiveDoc = computed(() => !!session.activeDoc);
 const hasOpenTabs = computed(() => session.docs.length > 0);
 const currentPathLabel = computed(() => filePath.value ?? "未命名");
@@ -635,6 +929,26 @@ const currentMarkdownSnapshot = computed(() => {
 const outlineItems = computed(() => extractOutline(currentMarkdownSnapshot.value));
 const docStats = computed(() => countDocumentStats(currentMarkdownSnapshot.value));
 const statsLabel = computed(() => formatStatsLabel(docStats.value));
+
+/** 状态栏光标位置（所见即所得） */
+const cursorLabel = computed(() => {
+  if (!activeDoc.value) return "";
+  if (editorMode.mode === "source") return "源码";
+  const ed = activeEditor.value;
+  if (!ed) return "";
+  try {
+    const { from } = ed.state.selection;
+    const before = ed.state.doc.textBetween(0, from, "\n");
+    const line = before.split("\n").length;
+    const lastNl = before.lastIndexOf("\n");
+    const col = from - lastNl;
+    return `Ln ${line}, Col ${col}`;
+  } catch {
+    return "";
+  }
+});
+
+const encodingLabel = computed(() => (activeDoc.value ? "UTF-8" : ""));
 
 const findMatchList = computed(() =>
   findMatches(currentMarkdownSnapshot.value, findQuery.value, {
@@ -983,11 +1297,11 @@ async function openFile(path?: string) {
     recent.addRecent(path);
     persistSessionSoon();
     await preferSourceModeForLargeDoc(session.activeDoc);
-    status.value = `已打开 ${path}`;
+    showToast(`已打开 ${basename(path)}`, "success");
   } catch (e) {
     // 文件可能已删除/移动，从最近列表清理
     if (path) recent.removeRecent(path);
-    status.value = `打开失败：${e}`;
+    showToast(`打开失败：${e}`, "error");
   }
 }
 
@@ -1019,50 +1333,66 @@ async function saveFile() {
     doc.dirty = false;
     removeDraftForDoc(doc);
     persistSessionSoon();
-    status.value = `已保存 ${path}`;
+    showToast(`已保存 ${basename(path)}`, "success");
   } catch (e) {
-    status.value = `保存失败：${e}`;
+    showToast(`保存失败：${e}`, "error");
   }
 }
 
 async function createWorkspaceFile(dir = ws.rootPath) {
   if (!dir) {
-    status.value = "请先打开文件夹";
+    showToast("请先打开文件夹", "warn");
     return;
   }
-  const name = window.prompt("文件名", "untitled.md");
-  if (name === null) return;
+  const name = await promptInputDialog({
+    title: "新建文件",
+    label: "文件名",
+    placeholder: "untitled.md",
+    initialValue: "untitled.md",
+    confirmLabel: "创建",
+    validate: (v) => (/[\\/]/.test(v) ? "不能包含路径分隔符" : null),
+  });
+  if (!name) return;
   try {
     const path = await ws.createFile(dir, name);
     await openFile(path);
-    status.value = `已新建文件 ${path}`;
+    showToast(`已新建文件 ${basename(path)}`, "success");
   } catch (e) {
-    const message = `新建文件失败：${e instanceof Error ? e.message : String(e)}`;
-    status.value = message;
-    window.alert(message);
+    showToast(`新建文件失败：${e instanceof Error ? e.message : e}`, "error");
   }
 }
 
 async function createWorkspaceFolder(dir = ws.rootPath) {
   if (!dir) {
-    status.value = "请先打开文件夹";
+    showToast("请先打开文件夹", "warn");
     return;
   }
-  const name = window.prompt("文件夹名", "新建文件夹");
-  if (name === null) return;
+  const name = await promptInputDialog({
+    title: "新建文件夹",
+    label: "文件夹名",
+    placeholder: "新建文件夹",
+    initialValue: "新建文件夹",
+    confirmLabel: "创建",
+    validate: (v) => (/[\\/]/.test(v) ? "不能包含路径分隔符" : null),
+  });
+  if (!name) return;
   try {
     const path = await ws.createFolder(dir, name);
-    status.value = `已新建文件夹 ${path}`;
+    showToast(`已新建文件夹 ${basename(path)}`, "success");
   } catch (e) {
-    const message = `新建文件夹失败：${e instanceof Error ? e.message : String(e)}`;
-    status.value = message;
-    window.alert(message);
+    showToast(`新建文件夹失败：${e instanceof Error ? e.message : e}`, "error");
   }
 }
 
 async function renameWorkspaceNode(node: FileNode) {
-  const newName = window.prompt(node.isDir ? "新文件夹名" : "新文件名", node.name);
-  if (newName === null || newName.trim() === node.name) return;
+  const newName = await promptInputDialog({
+    title: node.isDir ? "重命名文件夹" : "重命名文件",
+    label: "新名称",
+    initialValue: node.name,
+    confirmLabel: "重命名",
+    validate: (v) => (/[\\/]/.test(v) ? "不能包含路径分隔符" : null),
+  });
+  if (!newName || newName === node.name) return;
   const oldPath = node.path;
   try {
     const newPath = await ws.renameNode(node, newName);
@@ -1077,11 +1407,9 @@ async function renameWorkspaceNode(node: FileNode) {
     const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
     if (affectedDocs.length || deduped) persistSessionSoon();
     recent.renameRecent(oldPath, newPath);
-    status.value = `已重命名为 ${basename(newPath)}`;
+    showToast(`已重命名为 ${basename(newPath)}`, "success");
   } catch (e) {
-    const message = `重命名失败：${e instanceof Error ? e.message : String(e)}`;
-    status.value = message;
-    window.alert(message);
+    showToast(`重命名失败：${e instanceof Error ? e.message : e}`, "error");
   }
 }
 
@@ -1105,11 +1433,9 @@ async function moveWorkspaceNode(node: FileNode) {
     const deduped = await dedupeOpenDocsForPaths(changedPaths.length ? changedPaths : [newPath]);
     if (affectedDocs.length || deduped) persistSessionSoon();
     recent.renameRecent(oldPath, newPath);
-    status.value = `已移动到 ${targetDir}`;
+    showToast(`已移动到 ${targetDir}`, "success");
   } catch (e) {
-    const message = `移动失败：${e instanceof Error ? e.message : String(e)}`;
-    status.value = message;
-    window.alert(message);
+    showToast(`移动失败：${e instanceof Error ? e.message : e}`, "error");
   }
 }
 
@@ -1137,11 +1463,9 @@ async function deleteWorkspaceNode(node: FileNode) {
     } else {
       persistSessionSoon();
     }
-    status.value = `已移到回收站 ${node.name}`;
+    showToast(`已移到回收站 ${node.name}`, "success");
   } catch (e) {
-    const error = `移到回收站失败：${e instanceof Error ? e.message : String(e)}`;
-    status.value = error;
-    window.alert(error);
+    showToast(`移到回收站失败：${e instanceof Error ? e.message : e}`, "error");
   }
 }
 
@@ -1290,7 +1614,7 @@ function scheduleAutosave() {
       removeDraftForDoc(doc);
       if (doc === session.activeDoc) status.value = `已自动保存 ${doc.filePath}`;
     } catch (e) {
-      status.value = `自动保存失败：${e}`;
+      showToast(`自动保存失败：${e}`, "error");
     }
   }, settings.autoSaveDelayMs);
 }
@@ -1627,11 +1951,25 @@ function insertLink() {
   const ed = activeEditor.value as any;
   if (!ed) return;
   const current = ed.getAttributes?.("link")?.href ?? "";
-  const href = window.prompt("链接 URL（留空移除链接）", current);
-  if (href === null) return;
-  const chain = ed.chain().focus().extendMarkRange("link");
-  if (href.trim()) chain.setLink({ href: href.trim() }).run();
-  else chain.unsetLink().run();
+  void (async () => {
+    const href = await promptInputDialog({
+      title: "插入链接",
+      label: "URL",
+      placeholder: "https://",
+      initialValue: current,
+      confirmLabel: "确定",
+    });
+    if (href === null) return;
+    const chain = ed.chain().focus().extendMarkRange("link");
+    if (href.trim()) chain.setLink({ href: href.trim() }).run();
+    else chain.unsetLink().run();
+    if (session.activeDoc && editorMode.mode === "visual") {
+      session.activeDoc.rawMd = markdownFromEditor(ed);
+      session.activeDoc.dirty = true;
+      saveDraftForDoc(session.activeDoc);
+      scheduleAutosave();
+    }
+  })();
 }
 
 function insertGithubAlert(type: GithubAlertType) {
@@ -1644,10 +1982,23 @@ function insertGithubAlert(type: GithubAlertType) {
 function insertImageFromDialog() {
   const ed = activeEditor.value as any;
   if (!ed) return;
-  const url = window.prompt("图片路径或 URL", "");
-  if (url === null) return;
-  if (!url.trim()) return;
-  ed.chain().focus().setImage({ src: url.trim(), alt: "" }).run();
+  void (async () => {
+    const url = await promptInputDialog({
+      title: "插入图片",
+      label: "路径或 URL",
+      placeholder: "./assets/a.png 或 https://…",
+      initialValue: "",
+      confirmLabel: "插入",
+    });
+    if (url === null || !url.trim()) return;
+    ed.chain().focus().setImage({ src: url.trim(), alt: "" }).run();
+    if (session.activeDoc && editorMode.mode === "visual") {
+      session.activeDoc.rawMd = markdownFromEditor(ed);
+      session.activeDoc.dirty = true;
+      saveDraftForDoc(session.activeDoc);
+      scheduleAutosave();
+    }
+  })();
 }
 
 function insertDetailsBlock() {
@@ -1703,6 +2054,33 @@ function runSlashCommand(cmd: SlashCommand) {
 function onSlashMenuClose() {
   showSlashMenu.value = false;
   slashQuery.value = "";
+}
+
+function runEmojiAlias(item: { name: string; emoji: string }) {
+  const ed = activeEditor.value as any;
+  if (!ed) return;
+  const { from, $from } = ed.state.selection;
+  const textBefore = ed.state.doc.textBetween($from.start(), from, "\n");
+  const colonIdx = textBefore.lastIndexOf(":");
+  const start = from - (textBefore.length - colonIdx);
+  ed.chain()
+    .focus()
+    .deleteRange({ from: start, to: from })
+    .insertContent(item.emoji)
+    .run();
+  showEmojiAlias.value = false;
+  emojiAliasQuery.value = "";
+  if (session.activeDoc) {
+    session.activeDoc.rawMd = markdownFromEditor(ed);
+    session.activeDoc.dirty = true;
+    saveDraftForDoc(session.activeDoc);
+    scheduleAutosave();
+  }
+}
+
+function onEmojiAliasClose() {
+  showEmojiAlias.value = false;
+  emojiAliasQuery.value = "";
 }
 
 function openSearchResult(path: string) {
@@ -1767,6 +2145,7 @@ const toolbarActive = computed<ToolbarActiveMap>(() => {
     bold: ed.isActive("bold"),
     italic: ed.isActive("italic"),
     strike: ed.isActive("strike"),
+    highlight: ed.isActive("highlight"),
     code: ed.isActive("code"),
     bulletList: ed.isActive("bulletList"),
     orderedList: ed.isActive("orderedList"),
@@ -1815,6 +2194,9 @@ function handleToolbarAction(action: EditorToolbarAction) {
     case "strike":
       runEditorCommand("toggleStrike");
       break;
+    case "highlight":
+      ed?.chain().focus().toggleMark("highlight").run();
+      break;
     case "code":
       runEditorCommand("toggleCode");
       break;
@@ -1857,11 +2239,23 @@ function handleToolbarAction(action: EditorToolbarAction) {
     case "deleteTableColumn":
       ed?.chain().focus().deleteColumn().run();
       break;
+    case "tableAlignLeft":
+      ed?.chain().focus().updateAttributes("tableCell", { textAlign: "left" }).run();
+      ed?.chain().focus().updateAttributes("tableHeader", { textAlign: "left" }).run();
+      break;
+    case "tableAlignCenter":
+      ed?.chain().focus().updateAttributes("tableCell", { textAlign: "center" }).run();
+      ed?.chain().focus().updateAttributes("tableHeader", { textAlign: "center" }).run();
+      break;
+    case "tableAlignRight":
+      ed?.chain().focus().updateAttributes("tableCell", { textAlign: "right" }).run();
+      ed?.chain().focus().updateAttributes("tableHeader", { textAlign: "right" }).run();
+      break;
     case "insertMermaid":
       ed?.chain().focus().insertContent({ type: "codeBlock", attrs: { language: "mermaid" }, content: [{ type: "text", text: DEFAULT_MERMAID_SNIPPET }] }).run();
       break;
     case "insertMathInline":
-      ed?.chain().focus().insertContent(`$${DEFAULT_MATH_BLOCK}$`).run();
+      ed?.chain().focus().insertContent({ type: "mathInline", attrs: { latex: DEFAULT_MATH_BLOCK } }).run();
       break;
     case "insertMathBlock":
       ed?.chain().focus().insertContent({ type: "mathBlock", attrs: { latex: DEFAULT_MATH_BLOCK } }).run();
@@ -1968,7 +2362,7 @@ async function exportHtml() {
     await invoke("write_text_file", { path, content: html });
     status.value = `已导出 HTML ${path}`;
   } catch (e) {
-    status.value = `导出 HTML 失败：${e}`;
+    showToast(`导出 HTML 失败：${e}`, "error");
   }
 }
 
@@ -1980,7 +2374,7 @@ async function exportPdf() {
     if (printHtmlDocument(html)) status.value = "已打开打印对话框（可另存为 PDF）";
     else status.value = "打印导出失败";
   } catch (e) {
-    status.value = `导出 PDF 失败：${e}`;
+    showToast(`导出 PDF 失败：${e}`, "error");
   }
 }
 
@@ -1997,7 +2391,7 @@ async function exportDoc() {
     await invoke("write_text_file", { path, content: html });
     status.value = `已导出 Word ${path}`;
   } catch (e) {
-    status.value = `导出 Word 失败：${e}`;
+    showToast(`导出 Word 失败：${e}`, "error");
   }
 }
 
@@ -2021,7 +2415,7 @@ async function exportPng() {
     await invoke("write_file_bytes", { path, bytes: Array.from(base64ToBytes(base64)) });
     status.value = `已导出 PNG ${path}`;
   } catch (e) {
-    status.value = `导出 PNG 失败：${e}`;
+    showToast(`导出 PNG 失败：${e}`, "error");
   }
 }
 
@@ -2146,6 +2540,27 @@ onMounted(async () => {
   window.addEventListener("click", closeContextMenu);
   window.addEventListener("keydown", handleGlobalKeydown, true);
   unlistenWindowClose = await getCurrentWindow().onCloseRequested(handleWindowCloseRequested);
+  try {
+    unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
+      const type = event.payload.type;
+      if (type === "over") {
+        isDragOverWindow.value = true;
+      } else if (type === "drop") {
+        isDragOverWindow.value = false;
+        const paths = (event.payload as { paths?: string[] }).paths ?? [];
+        void openDroppedPaths(paths);
+      } else {
+        isDragOverWindow.value = false;
+      }
+    });
+  } catch (e) {
+    console.warn("drag drop listener failed", e);
+  }
+  // 单实例：第二次启动把文件路径转到本窗口
+  unlistenOpenFiles = await listen<string[]>("mira:open-files", (event) => {
+    const paths = event.payload || [];
+    void openDroppedPaths(paths);
+  });
   // 文件监听：外部改动当前/已打开的文档时重载或提示（设计 §9.4 / §16.5）
   unlistenFs = await listen<{ path: string; kind: string }>("fs:changed", (e) => {
     const { path, kind } = e.payload;
@@ -2176,6 +2591,15 @@ onMounted(async () => {
   });
   await restoreLastSession();
   await restoreDrafts();
+  try {
+    const args = await invoke<string[]>("get_cli_args");
+    const files = (args || []).filter((p) => DROPPABLE_MD.test(p));
+    for (const path of files) {
+      await openFile(path);
+    }
+  } catch {
+    /* ignore */
+  }
 });
 
 onBeforeUnmount(() => {
@@ -2192,6 +2616,8 @@ onBeforeUnmount(() => {
   if (unlistenFs) unlistenFs();
   if (unlistenMoved) unlistenMoved();
   if (unlistenWindowClose) unlistenWindowClose();
+  if (unlistenDrop) unlistenDrop();
+  if (unlistenOpenFiles) unlistenOpenFiles();
   clearCustomCss();
   for (const ed of editors.value.values()) ed.destroy();
   editors.value.clear();
@@ -2200,7 +2626,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ 'is-drag-over': isDragOverWindow }">
     <AppMenuBar
       :recent-paths="recent.recentPaths"
       :shortcuts="menuShortcutLabels"
@@ -2279,14 +2705,22 @@ onBeforeUnmount(() => {
           :editor="activeEditor"
           class="mira-editor editor"
         />
-        <div v-else class="editor-empty">
-          <div class="editor-empty-card">
-            <h2>Mira</h2>
-            <p>所见即所得的 Markdown 编辑器</p>
-            <p class="editor-empty-actions">
-              打开文件（Ctrl+O）或打开文件夹（Ctrl+Shift+O）开始写作
-            </p>
-          </div>
+        <ImagePanel
+          v-if="imagePanel && activeDoc && editorMode.mode === 'visual' && activeEditor"
+          :src="imagePanel.src"
+          :alt="imagePanel.alt"
+          @change="onImagePanelChange"
+          @remove="onImagePanelRemove"
+          @close="imagePanel = null"
+        />
+        <div v-if="!activeEditor && editorMode.mode !== 'source'" class="editor-empty">
+          <WelcomeEmpty
+            :recent-paths="recent.recentPaths"
+            @new-doc="newDoc"
+            @open-file="() => openFile()"
+            @open-folder="openFolder"
+            @open-recent="openFile"
+          />
         </div>
       </div>
       <OutlinePanel
@@ -2326,6 +2760,14 @@ onBeforeUnmount(() => {
       @pick="pickEmoji"
       @close="showEmoji = false"
     />
+    <EmojiAliasMenu
+      v-if="showEmojiAlias && activeDoc && editorMode.mode === 'visual'"
+      :query="emojiAliasQuery"
+      :x="emojiAliasPos.x"
+      :y="emojiAliasPos.y"
+      @run="runEmojiAlias"
+      @close="onEmojiAliasClose"
+    />
     <SlashMenu
       v-if="showSlashMenu && activeDoc && editorMode.mode === 'visual'"
       :query="slashQuery"
@@ -2334,7 +2776,11 @@ onBeforeUnmount(() => {
       @run="runSlashCommand"
       @close="onSlashMenuClose"
     />
-    <ShortcutSettings v-if="showShortcutSettings" @close="showShortcutSettings = false" />
+    <ShortcutSettings
+      v-if="showShortcutSettings"
+      @close="showShortcutSettings = false"
+      @feedback="(p) => showToast(p.message, p.kind)"
+    />
     <CommandPalette
       v-if="showCommandPalette"
       :shortcuts="menuShortcutLabels"
@@ -2348,8 +2794,36 @@ onBeforeUnmount(() => {
       @open-file="openPaletteFile"
       @query-change="handlePaletteQueryChange"
     />
+    <AppToast
+      v-if="toast"
+      :message="toast.message"
+      :kind="toast.kind"
+      @close="closeToast"
+    />
+    <InputDialog
+      v-if="inputDialog"
+      :title="inputDialog.title"
+      :label="inputDialog.label"
+      :placeholder="inputDialog.placeholder"
+      :initial-value="inputDialog.initialValue"
+      :confirm-label="inputDialog.confirmLabel"
+      :validate="inputDialog.validate"
+      @submit="onInputDialogSubmit"
+      @cancel="onInputDialogCancel"
+    />
+    <div v-if="isDragOverWindow" class="drop-overlay" aria-hidden="true">
+      <div class="drop-overlay-card">
+        <strong>松开以打开</strong>
+        <span>支持 .md / .markdown / .txt</span>
+      </div>
+    </div>
     <footer class="status">
       <span class="status-path" :title="currentPathLabel">{{ currentPathLabel }}</span>
+      <span class="status-mid">
+        <span v-if="autosaveLabel" class="status-autosave">{{ autosaveLabel }}</span>
+        <span v-if="cursorLabel" class="status-cursor">{{ cursorLabel }}</span>
+        <span v-if="encodingLabel" class="status-enc">{{ encodingLabel }}</span>
+      </span>
       <span class="status-save" :class="{ dirty }">{{ saveStateLabel }}</span>
       <span v-if="activeDoc" class="status-stats" title="字数统计">{{ statsLabel }}</span>
     </footer>

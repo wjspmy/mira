@@ -2,7 +2,7 @@
 // - markdown-it 插件把公式解析为带 data-latex 的占位元素
 // - MathInline（行内，只渲染）/ MathBlock（块级，点击编辑原文）
 // - tiptap-markdown serialize glue 保证 round-trip（保存回 $...$ / $$...$$）
-import { Node } from "@tiptap/core";
+import { InputRule, Node } from "@tiptap/core";
 import katex from "katex";
 
 /* eslint-disable */
@@ -92,6 +92,23 @@ export const MathInline = Node.create({
   addAttributes() {
     return { latex: { default: "" } };
   },
+  // 输入 $latex$ 后空格/回车 触发行内公式
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /\$([^$\n]+)\$\s$/,
+        handler: ({ state, range, match, commands }) => {
+          const latex = match[1] ?? "";
+          commands.deleteRange(range);
+          commands.insertContentAt(range.from, {
+            type: this.name,
+            attrs: { latex },
+          });
+          void state;
+        },
+      }),
+    ];
+  },
   parseHTML() {
     return [{ tag: "span.math-inline", getAttrs: (el: HTMLElement) => ({ latex: el.getAttribute("data-latex") || "" }) }];
   },
@@ -168,6 +185,22 @@ export const MathBlock = Node.create({
   selectable: true,
   addAttributes() {
     return { latex: { default: "" } };
+  },
+  // 单独一行输入 $$latex$$ 后回车 触发块级公式
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /^\$\$([^$]+)\$\$\s$/,
+        handler: ({ range, match, commands }) => {
+          const latex = (match[1] ?? "").trim();
+          commands.deleteRange(range);
+          commands.insertContentAt(range.from, {
+            type: this.name,
+            attrs: { latex },
+          });
+        },
+      }),
+    ];
   },
   parseHTML() {
     return [{ tag: "div.math-block", getAttrs: (el: HTMLElement) => ({ latex: el.getAttribute("data-latex") || "" }) }];

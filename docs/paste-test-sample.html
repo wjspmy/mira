@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>Mira 粘贴测试样例</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 32px auto; line-height: 1.6; }
+    section { border: 1px dashed #ccc; padding: 16px; margin: 16px 0; border-radius: 8px; }
+    h2 { margin-top: 0; font-size: 16px; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>粘贴测试（选中 section 内容 → Ctrl+C → 粘贴进 Mira）</h1>
+
+  <section>
+    <h2>1. 标题与行内</h2>
+    <h1>一级标题</h1>
+    <h2>二级标题</h2>
+    <p>正文含 <strong>粗体</strong>、<em>斜体</em>、<del>删除</del>、<code>code</code>、
+      <a href="https://example.com">示例链接</a>、<mark>高亮</mark>。</p>
+    <p>下标 H<sub>2</sub>O，上标 x<sup>2</sup>。</p>
+  </section>
+
+  <section>
+    <h2>2. 列表</h2>
+    <ul>
+      <li>无序 A</li>
+      <li>无序 B</li>
+    </ul>
+    <ol>
+      <li>有序一</li>
+      <li>有序二</li>
+    </ol>
+    <ul>
+      <li><input type="checkbox" checked /> 已完成</li>
+      <li><input type="checkbox" /> 未完成</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>3. 引用与代码</h2>
+    <blockquote>
+      <p>这是引用第一段。</p>
+      <p>引用第二段。</p>
+    </blockquote>
+    <pre><code class="language-js">function hi() {
+  return 1 + 1;
+}</code></pre>
+  </section>
+
+  <section>
+    <h2>4. 表格与分隔线</h2>
+    <table>
+      <thead>
+        <tr><th>名称</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Mira</td><td>所见即所得</td></tr>
+        <tr><td>MarkText</td><td>开源 MD 编辑器</td></tr>
+      </tbody>
+    </table>
+    <hr />
+  </section>
+
+  <section>
+    <h2>5. 混合片段（更接近真实网页）</h2>
+    <h3>快速上手</h3>
+    <p>安装后打开即可写作。支持：</p>
+    <ol>
+      <li><strong>快捷键</strong>：Ctrl+O 打开文件</li>
+      <li><em>导出</em>：HTML / PDF / Word</li>
+    </ol>
+    <blockquote>
+      <p>提示：粘贴本段可测嵌套结构。</p>
+    </blockquote>
+    <p>更多见 <a href="https://github.com/wjspmy/mira">仓库</a>。</p>
+  </section>
+</body>
+</html>

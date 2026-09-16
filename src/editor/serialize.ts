@@ -38,6 +38,7 @@ import Image from "@tiptap/extension-image";
 import { MathInline, MathBlock, mathPlugin } from "./math";
 import { GithubAlertBlockquote } from "./github-alert";
 import { DetailsBlock, DetailsSummary } from "./details";
+import { HighlightMark, SubscriptMark, SuperscriptMark } from "./marks";
 
 const lowlight = createLowlight(common);
 
@@ -55,9 +56,28 @@ function ensureEditor(): Editor {
         DetailsBlock,
         DetailsSummary,
         CodeBlockLowlight.configure({ lowlight }),
-        Table, TableRow, TableHeader, TableCell,
+        Table, TableRow,
+        TableHeader.extend({
+          addAttributes() {
+            return {
+              ...this.parent?.(),
+              textAlign: { default: null },
+            };
+          },
+        }),
+        TableCell.extend({
+          addAttributes() {
+            return {
+              ...this.parent?.(),
+              textAlign: { default: null },
+            };
+          },
+        }),
         TaskList, TaskItem.configure({ nested: true }),
         Link.configure({ openOnClick: false }),
+        HighlightMark,
+        SubscriptMark,
+        SuperscriptMark,
         Image,
         MathInline, MathBlock,
         TiptapMarkdown.configure({ html: false, breaks: true }),
@@ -329,7 +349,10 @@ const MARK_PRIORITY: Record<string, number> = {
   strike: 1,
   bold: 2,
   italic: 3,
-  link: 4,
+  highlight: 4,
+  subscript: 5,
+  superscript: 6,
+  link: 7,
 };
 
 function wrapMarks(marks: readonly Mark[], text: string): string {
@@ -359,6 +382,12 @@ function wrapMark(m: Mark, text: string): string {
       if (title) return `[${text}](${href} "${title}")`;
       return `[${text}](${href})`;
     }
+    case "highlight":
+      return `==${text}==`;
+    case "subscript":
+      return `~${text}~`;
+    case "superscript":
+      return `^${text}^`;
     default:
       return text;
   }

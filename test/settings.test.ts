@@ -76,6 +76,10 @@ describe("settings store", () => {
     expect(store.autoSaveDelayMs).toBe(300);
     expect(store.imageStrategy).toBe("relative");
 
+    expect(store.slashCommandsEnabled).toBe(true);
+    store.patch({ slashCommandsEnabled: false });
+    expect(store.slashCommandsEnabled).toBe(false);
+
     store.setTheme("dark");
     expect(store.theme).toBe("dark");
     expect(storage.get("mira-theme")).toBe("dark");

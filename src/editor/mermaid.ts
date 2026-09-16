@@ -84,10 +84,27 @@ function createMermaidNodeView(node: PMNode): NodeView {
   };
 }
 
-/** CodeBlock：language=mermaid 时渲染图表（对标 Vditor / MarkText / Typora）。 */
+/** CodeBlock：language=mermaid 时渲染图表；普通代码块显示语言角标（Vditor / GitHub 风格）。 */
 export function createMermaidCodeBlock(base: typeof CodeBlockLowlight, lowlight: unknown) {
   return base
     .extend({
+      renderHTML({ node, HTMLAttributes }) {
+        const language = (node.attrs.language as string | null) || null;
+        return [
+          "pre",
+          {
+            ...HTMLAttributes,
+            ...(language ? { "data-language": language } : {}),
+          },
+          [
+            "code",
+            {
+              class: language ? this.options.languageClassPrefix + language : null,
+            },
+            0,
+          ],
+        ];
+      },
       addNodeView() {
         const parentView = this.parent?.() as
           | ((props: NodeViewRendererProps) => NodeView)
@@ -96,15 +113,37 @@ export function createMermaidCodeBlock(base: typeof CodeBlockLowlight, lowlight:
           if (props.node.attrs.language === "mermaid") {
             return createMermaidNodeView(props.node);
           }
-          if (parentView) return parentView(props);
+          if (parentView) {
+            const view = parentView(props);
+            let current = props.node;
+            const syncLang = () => {
+              if (!view.dom) return;
+              const lang = (current.attrs.language as string | null) || "";
+              if (lang) view.dom.setAttribute("data-language", lang);
+              else view.dom.removeAttribute("data-language");
+            };
+            syncLang();
+            const prevUpdate = view.update?.bind(view);
+            view.update = (updated, decorations, innerProps) => {
+              current = updated;
+              syncLang();
+              return prevUpdate ? prevUpdate(updated, decorations, innerProps) : true;
+            };
+            return view;
+          }
           const dom = document.createElement("pre");
           const code = document.createElement("code");
+          const lang = (props.node.attrs.language as string | null) || "";
+          if (lang) dom.setAttribute("data-language", lang);
           code.textContent = props.node.textContent;
           dom.append(code);
           return {
             dom,
             update: (updated) => {
               if (updated.type.name !== "codeBlock") return false;
+              const nextLang = (updated.attrs.language as string | null) || "";
+              if (nextLang) dom.setAttribute("data-language", nextLang);
+              else dom.removeAttribute("data-language");
               code.textContent = updated.textContent;
               return true;
             },

@@ -8,16 +8,18 @@
 
 ## 下载
 
-到 [Releases](https://github.com/wjspmy/mira/releases) 获取 Windows 安装包。当前仅提供 Windows x64。
+到 [Releases](https://github.com/wjspmy/mira/releases) 下载 Windows x64 版本。
+
+**只想马上用、不安装**：下载 `Mira_X.Y.Z_x64-portable.exe`，双击即可运行。
 
 | 文件 | 说明 |
 |------|------|
-| `Mira_*_x64-portable.exe` | **免安装**。下载后双击即可运行，适合试用或放 U 盘 |
-| `Mira_*_x64-setup.exe` | NSIS 安装程序。会写开始菜单、文件关联，推荐日常安装 |
-| `Mira_*_x64_en-US.msi` | MSI 安装程序。企业/静默部署可用；与 NSIS 功能等价 |
-| Source code (zip/tar.gz) | 源码归档，不是可运行程序 |
+| `Mira_X.Y.Z_x64-portable.exe` | **免安装主程序**，下载后直接运行 |
+| `Mira_X.Y.Z_x64-setup.exe` | NSIS 安装包（开始菜单、`.md` 关联） |
+| `Mira_X.Y.Z_x64_en-US.msi` | MSI 安装包（与 NSIS 等价） |
+| Source code (zip / tar.gz) | 源码归档，**不是**可执行程序 |
 
-安装包依赖系统 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Win10/11 通常已自带）。
+运行需要系统已装 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Win10/11 一般自带）。
 
 ## 功能概览
 
@@ -68,24 +70,16 @@ npm test
 
 图标源文件：`docs/icon-mira.svg`；多尺寸见 `docs/icons/` 与 `scripts/make-icons.py`。
 
+维护者发版步骤见 [docs/release.md](docs/release.md)。
+
 ## 技术栈
 
 - Tauri 2（Rust）+ Vue 3 + Vite + TypeScript  
 - Tiptap / ProseMirror + CodeMirror 6 + KaTeX + Mermaid + lowlight  
 
-## 发版（维护者）
-
-推 `v*` tag 会触发 GitHub Actions，在 Windows 上打包并生成 Draft Release（便携 exe + NSIS + MSI）。确认无误后在 GitHub 上 Publish。
-
-```powershell
-# 版本号需同时改：package.json / tauri.conf.json / Cargo.toml
-git tag v0.1.0
-git push origin v0.1.0
-```
-
 ## 状态
 
-核心编辑能力已完成，可日常使用。发布向剩余：自动更新签名、mac/Linux 打包、完整 E2E。
+核心编辑能力已完成，可日常使用。尚未做：应用内自动更新、macOS/Linux 打包、完整 E2E。
 
 ## License
 

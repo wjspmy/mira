@@ -58,12 +58,13 @@ jobs:
 
       - name: Prepare portable exe
         run: |
-          Copy-Item "src-tauri/target/x86_64-pc-windows-msvc/release/mira.exe" "Mira_${{ github.ref_name }}_x64-portable.exe"
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          Copy-Item "src-tauri/target/x86_64-pc-windows-msvc/release/mira.exe" "Mira_${ver}_x64-portable.exe"
 
       - name: Upload portable exe
         uses: softprops/action-gh-release@v2
         with:
-          files: Mira_${{ github.ref_name }}_x64-portable.exe
+          files: Mira_*_x64-portable.exe
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

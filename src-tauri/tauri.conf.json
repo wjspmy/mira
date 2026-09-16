@@ -38,7 +38,7 @@
       {
         "ext": ["md", "markdown", "txt"],
         "name": "Markdown",
-        "description": "Markdown 文档",
+        "description": "Markdown Document",
         "role": "Editor"
       }
     ],
